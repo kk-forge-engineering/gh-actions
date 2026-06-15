@@ -34,7 +34,7 @@ runs:
             console.log(`Found sonar-project.properties.mjs at ${localConfigPath}`);
           }
 
-          const isPR = Boolean(${{ steps.PR.outputs.number }});
+          const isPR = Boolean(${{ steps.checkPr.outputs.number }});
           const branchName = isPR ? undefined : '${{ github.ref_name }}';
 
           let config = {

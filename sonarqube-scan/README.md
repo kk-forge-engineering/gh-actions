@@ -5,11 +5,11 @@ Runs SonarQube code analysis.
 ## Requirements
 
 - The code coverage report in the project root
-- To configure SonarQube `sonar-project.properties` needs to be provided as `sonar-project.properties.js` file in the project root:
+- To configure SonarQube `sonar-project.properties` needs to be provided as a `sonar-project.properties.mjs` file in the project root:
 
 ```js
-// sonar-project.properties.js
-module.export = {
+// sonar-project.properties.mjs
+export default {
   'sonar.projectKey': 'ProjectName',
 
   'sonar.javascript.lcov.reportPaths': 'coverage/lcov.info',
@@ -44,7 +44,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Prepare NPM
         uses: karpov-kir/github-actions/npm-prepare@main
@@ -54,7 +54,7 @@ jobs:
     needs: install
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Prepare NPM
         uses: karpov-kir/github-actions/npm-prepare@main
@@ -73,7 +73,7 @@ jobs:
     needs: test
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Restore coverage cache
         uses: actions/cache@v4
