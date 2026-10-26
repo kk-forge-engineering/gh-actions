@@ -17,8 +17,11 @@ export default {
 
   'sonar.sources': ['packages/backend/src', 'packages/shared/src', 'packages/web/src'].join(','),
   // SonarQube supports limited wildcards (https://docs.sonarqube.org/latest/project-administration/narrowing-the-focus).
-  // Exclude test files from analysis.
+  // Test files are indexed as tests, not as sources. SonarQube drops a test execution report for files it did
+  // not index as tests.
   'sonar.exclusions': ['**/*.test.*', '**/*.spec.*', '**/*.e2e-spec.*'].join(','),
+  'sonar.tests': ['packages/backend/src', 'packages/shared/src', 'packages/web/src'].join(','),
+  'sonar.test.inclusions': ['**/*.test.*', '**/*.spec.*', '**/*.e2e-spec.*'].join(','),
 
   'sonar.coverage.exclusions': ['packages/backend/src/migrations/*', 'packages/backend/src/dbUtils.ts'].join(','),
 };
