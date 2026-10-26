@@ -1,0 +1,152 @@
+# Builds a repo's image on the kk-forge runner, pushes it to dr.kk-forge.com under its version, and publishes
+# a GitHub Release `v<version>` that records the image digest. deploy-image.yml deploys from that record.
+# A stable X.Y.Z comes from the default branch only, and also moves `latest`. A dev X.Y.Z-dev.N comes from
+# any branch. The caller passes the org secret REGISTRY_PASSWORD.
+name: Release image
+
+on:
+  workflow_call:
+    inputs:
+      image:
+        description: The image's repository in dr.kk-forge.com, such as rate-limiter
+        required: true
+        type: string
+      bump:
+        description: patch, minor or major, applied to the highest stable version tag
+        required: true
+        type: string
+      dev:
+        description: Release X.Y.Z-dev.N from the current branch, instead of X.Y.Z from the default branch
+        type: boolean
+        default: false
+      context:
+        description: The build context
+        type: string
+        default: .
+      dockerfile:
+        description: The Dockerfile, relative to the repo root
+        type: string
+        default: Dockerfile
+    secrets:
+      REGISTRY_PASSWORD:
+        description: The password of the registry user ci
+        required: true
+
+jobs:
+  release:
+    runs-on: [self-hosted, swarm]
+    # Two releases at once would pick the same version and both push its tag.
+    concurrency:
+      group: release-${{ github.repository }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    env:
+      REPOSITORY: dr.kk-forge.com/${{ inputs.image }}
+      IS_DEV: ${{ inputs.dev }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The version comes from the tags.
+          fetch-depth: 0
+
+      - name: Pick the version
+        id: version
+        env:
+          BUMP: ${{ inputs.bump }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          if [ "$IS_DEV" != true ] && [ "$GITHUB_REF" != "refs/heads/$DEFAULT_BRANCH" ]; then
+            echo "::error::A stable release comes from $DEFAULT_BRANCH. Release a dev version from $GITHUB_REF_NAME."
+            exit 1
+          fi
+          latest=$(git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1 || true)
+          IFS=. read -r major minor patch <<<"${latest#v}"
+          major=${major:-0} minor=${minor:-0} patch=${patch:-0}
+          case "$BUMP" in
+            major) version="$((major + 1)).0.0" ;;
+            minor) version="$major.$((minor + 1)).0" ;;
+            patch) version="$major.$minor.$((patch + 1))" ;;
+            *) echo "::error::bump is patch, minor or major, not $BUMP"; exit 1 ;;
+          esac
+          if [ "$IS_DEV" = true ]; then
+            version="$version-dev.$GITHUB_RUN_NUMBER"
+          fi
+          if git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
+            echo "::error::v$version is already released"
+            exit 1
+          fi
+          echo "Releasing $version after ${latest:-no stable release}"
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+
+      - name: Log in to dr.kk-forge.com
+        env:
+          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+        run: printf '%s' "$REGISTRY_PASSWORD" | docker login dr.kk-forge.com --username ci --password-stdin
+
+      - name: Build and push
+        id: build
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          CONTEXT: ${{ inputs.context }}
+          DOCKERFILE: ${{ inputs.dockerfile }}
+        run: |
+          set -euo pipefail
+          # The launcher gives each kk-forge runner its own buildkitd at BUILDKIT_HOST.
+          if [ -z "${BUILDKIT_HOST:-}" ]; then
+            echo "::error::No BUILDKIT_HOST: this job runs only on the kk-forge runner"
+            exit 1
+          fi
+          docker buildx create --name kk-forge --driver remote "$BUILDKIT_HOST" --use
+          # A version tag is never moved, so a deploy of that version always gets the same image.
+          if found=$(docker buildx imagetools inspect "$REPOSITORY:$VERSION" 2>&1); then
+            echo "::error::$REPOSITORY:$VERSION is already in the registry"
+            exit 1
+          elif ! grep -q 'not found' <<<"$found"; then
+            echo "::error::Could not check $REPOSITORY:$VERSION in the registry: $found"
+            exit 1
+          fi
+          tags=(--tag "$REPOSITORY:$VERSION")
+          if [ "$IS_DEV" != true ]; then
+            # `docker stack deploy` resolves the stack's untagged image to latest.
+            tags+=(--tag "$REPOSITORY:latest")
+          fi
+          # buildkitd starts empty for each job, so its layer cache lives in the registry. Dev builds keep their
+          # own cache, so a stable release does not reuse a branch's layers by accident. REGISTRY_PASSWORD can
+          # write either cache, so this split does not stop a hostile branch.
+          cache="$REPOSITORY:buildcache"
+          if [ "$IS_DEV" = true ]; then
+            cache="$REPOSITORY:buildcache-dev"
+          fi
+          # --provenance=false pushes a plain manifest, so the digest is the image itself.
+          docker buildx build "$CONTEXT" --file "$DOCKERFILE" --platform linux/amd64 --push --provenance=false \
+            "${tags[@]}" \
+            --label "org.opencontainers.image.version=$VERSION" \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            --cache-from "type=registry,ref=$cache" \
+            --cache-to "type=registry,ref=$cache,mode=max" \
+            --metadata-file "$RUNNER_TEMP/build.json"
+          digest=$(sed -n 's/^ *"containerimage.digest": *"\(sha256:[0-9a-f]\{64\}\)".*/\1/p' "$RUNNER_TEMP/build.json")
+          if [ -z "$digest" ]; then
+            echo "::error::The build reported no image digest"
+            exit 1
+          fi
+          echo "Pushed $REPOSITORY:$VERSION as $digest"
+          echo "image=$REPOSITORY@$digest" >>"$GITHUB_OUTPUT"
+
+      - name: Publish the release
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          IMAGE: ${{ steps.build.outputs.image }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # deploy-image.yml reads the digest from this body.
+          body=$(printf '{"tag_name":"v%s","target_commitish":"%s","name":"v%s","body":"Image: `%s`","prerelease":%s,"make_latest":"%s","generate_release_notes":true}' \
+            "$VERSION" "$GITHUB_SHA" "$VERSION" "$IMAGE" "$IS_DEV" "$([ "$IS_DEV" = true ] && echo false || echo true)")
+          curl --fail-with-body --silent --show-error -X POST \
+            -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/releases" -d "$body" >/dev/null
+          echo "Released v$VERSION: $IMAGE" | tee -a "$GITHUB_STEP_SUMMARY"

@@ -6,7 +6,7 @@ Installs Bun, restores the Bun install cache, installs dependencies using `bun i
 
 ```yml
 - name: Prepare Bun
-  uses: karpov-kir/github-actions/bun-prepare@main
+  uses: kk-forge-engineering/github-actions/bun-prepare@v1
   with:
     bun-version: 1.2.17 # Optional, default is 1.2.17
 ```
@@ -21,20 +21,20 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Prepare Bun
-        uses: karpov-kir/github-actions/bun-prepare@main
+        uses: kk-forge-engineering/github-actions/bun-prepare@v1
 
   lint:
     runs-on: ubuntu-24.04
     needs: install
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Prepare Bun
-        uses: karpov-kir/github-actions/bun-prepare@main
+        uses: kk-forge-engineering/github-actions/bun-prepare@v1
 
       - name: Lint
         run: bun run lint
@@ -44,10 +44,10 @@ jobs:
     needs: install
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Prepare Bun
-        uses: karpov-kir/github-actions/bun-prepare@main
+        uses: kk-forge-engineering/github-actions/bun-prepare@v1
 
       - name: Test
         run: bun run test

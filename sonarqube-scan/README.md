@@ -4,7 +4,7 @@ Runs SonarQube code analysis.
 
 ## Requirements
 
-- The code coverage report in the project root
+- The code coverage reports the config names, written before the scan
 - To configure SonarQube `sonar-project.properties` needs to be provided as a `sonar-project.properties.mjs` file in the project root:
 
 ```js
@@ -28,7 +28,7 @@ export default {
 
 ```yml
 - name: SonarQube scan
-  uses: karpov-kir/github-actions/sonarqube-scan@main
+  uses: kk-forge-engineering/github-actions/sonarqube-scan@v1
   with:
     sonar-token: ${{ secrets.SONAR_TOKEN }}
     sonar-host-url: ${{ secrets.SONAR_HOST_URL }}
@@ -44,23 +44,23 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Prepare NPM
-        uses: karpov-kir/github-actions/npm-prepare@main
+        uses: kk-forge-engineering/github-actions/npm-prepare@v1
 
   test:
     runs-on: ubuntu-24.04
     needs: install
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Prepare NPM
-        uses: karpov-kir/github-actions/npm-prepare@main
+        uses: kk-forge-engineering/github-actions/npm-prepare@v1
 
       - name: Initialize coverage cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ./coverage
           key: ${{ runner.os }}-coverage-${{ github.sha }}
@@ -73,16 +73,16 @@ jobs:
     needs: test
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Restore coverage cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ./coverage
           key: ${{ runner.os }}-coverage-${{ github.sha }}
 
       - name: SonarQube scan
-        uses: karpov-kir/github-actions/sonarqube-scan@main
+        uses: kk-forge-engineering/github-actions/sonarqube-scan@v1
         with:
           sonar-token: ${{ secrets.SONAR_TOKEN }}
           sonar-host-url: ${{ secrets.SONAR_HOST_URL }}
