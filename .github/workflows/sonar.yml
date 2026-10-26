@@ -11,9 +11,9 @@ on:
         required: true
         type: string
       test-command:
-        description: The command that runs the tests and writes the coverage reports Sonar reads
-        required: true
+        description: The command that runs the tests and writes the coverage reports Sonar reads. A repo without tests leaves it out.
         type: string
+        default: ""
       sonar-host-url:
         description: The SonarQube URL
         type: string
@@ -38,6 +38,7 @@ jobs:
         uses: jdx/mise-action@v5.2.3
 
       - name: Test with coverage
+        if: inputs.test-command != ''
         env:
           TEST_COMMAND: ${{ inputs.test-command }}
         run: bash -c "$TEST_COMMAND"
