@@ -4,28 +4,25 @@ Runs SonarQube code analysis.
 
 ## Requirements
 
-- The code coverage reports the config names, written before the scan
-- To configure SonarQube `sonar-project.properties` needs to be provided as a `sonar-project.properties.mjs` file in the project root:
+- `sonar-project.properties` at the repo root. The action adds the branch or pull request and the commit, so the file holds only what belongs to the repo:
 
-```js
-// sonar-project.properties.mjs
-export default {
-  'sonar.projectKey': 'ProjectName',
+```properties
+sonar.projectKey=ProjectName
 
-  'sonar.javascript.lcov.reportPaths': 'coverage/lcov.info',
-  'sonar.testExecutionReportPaths': 'coverage/test-report.xml',
+sonar.javascript.lcov.reportPaths=coverage/lcov.info
+sonar.testExecutionReportPaths=coverage/test-report.xml
 
-  'sonar.sources': ['packages/backend/src', 'packages/shared/src', 'packages/web/src'].join(','),
-  // SonarQube supports limited wildcards (https://docs.sonarqube.org/latest/project-administration/narrowing-the-focus).
-  // Test files are indexed as tests, not as sources. SonarQube drops a test execution report for files it did
-  // not index as tests.
-  'sonar.exclusions': ['**/*.test.*', '**/*.spec.*', '**/*.e2e-spec.*'].join(','),
-  'sonar.tests': ['packages/backend/src', 'packages/shared/src', 'packages/web/src'].join(','),
-  'sonar.test.inclusions': ['**/*.test.*', '**/*.spec.*', '**/*.e2e-spec.*'].join(','),
+sonar.sources=packages/backend/src,packages/shared/src,packages/web/src
+# Test files are indexed as tests, not as sources. SonarQube drops a test execution report for files it did
+# not index as tests.
+sonar.exclusions=**/*.test.*,**/*.spec.*
+sonar.tests=packages/backend/src,packages/shared/src,packages/web/src
+sonar.test.inclusions=**/*.test.*,**/*.spec.*
 
-  'sonar.coverage.exclusions': ['packages/backend/src/migrations/*', 'packages/backend/src/dbUtils.ts'].join(','),
-};
+sonar.coverage.exclusions=packages/backend/src/migrations/*,packages/backend/src/dbUtils.ts
 ```
+
+- The coverage reports the file names, written before the scan
 
 ## Usage
 

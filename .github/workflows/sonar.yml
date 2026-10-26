@@ -1,5 +1,5 @@
 # Runs a repo's tests with coverage and sends the result to SonarQube. The repo keeps its own tools in
-# mise.toml and its Sonar settings in sonar-project.properties.mjs at its root. The caller passes the
+# mise.toml and its Sonar settings in sonar-project.properties at its root. The caller passes the
 # secret SONAR_TOKEN.
 name: Sonar
 
