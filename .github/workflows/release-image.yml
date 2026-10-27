@@ -1,7 +1,7 @@
 # Builds a repo's image on the kk-forge runner, pushes it to dr.kk-forge.com under its version, and publishes
 # a GitHub Release `v<version>` that records the image digest. deploy-image.yml deploys from that record.
 # A stable X.Y.Z comes from the default branch only, and also moves `latest`. A dev X.Y.Z-dev.N comes from
-# any branch. The caller passes the org secret REGISTRY_PASSWORD.
+# any branch. The caller passes the org secret DOCKER_REGISTRY_PASSWORD.
 name: Release image
 
 on:
@@ -28,7 +28,7 @@ on:
         type: string
         default: Dockerfile
     secrets:
-      REGISTRY_PASSWORD:
+      DOCKER_REGISTRY_PASSWORD:
         description: The password of the registry user ci
         required: true
 
@@ -82,8 +82,8 @@ jobs:
 
       - name: Log in to dr.kk-forge.com
         env:
-          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
-        run: printf '%s' "$REGISTRY_PASSWORD" | docker login dr.kk-forge.com --username ci --password-stdin
+          DOCKER_REGISTRY_PASSWORD: ${{ secrets.DOCKER_REGISTRY_PASSWORD }}
+        run: printf '%s' "$DOCKER_REGISTRY_PASSWORD" | docker login dr.kk-forge.com --username ci --password-stdin
 
       - name: Build and push
         id: build
@@ -109,7 +109,7 @@ jobs:
           fi
           tags=(--tag "$REPOSITORY:$VERSION")
           # buildkitd starts empty for each job, so its layer cache lives in the registry. Dev builds keep their
-          # own cache, so a stable release does not reuse a branch's layers by accident. REGISTRY_PASSWORD can
+          # own cache, so a stable release does not reuse a branch's layers by accident. DOCKER_REGISTRY_PASSWORD can
           # write either cache, so this split does not stop a hostile branch.
           cache="$REPOSITORY:buildcache"
           if [ "$IS_DEV" = true ]; then
