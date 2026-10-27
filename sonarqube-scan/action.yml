@@ -11,77 +11,43 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Check PR
-      uses: 8BitJonny/gh-get-current-pr@3.0.0
-      id: checkPr
-      with:
-        filterOutClosed: true
-        sha: ${{ github.event.pull_request.head.sha }}
-
-    - name: Create sonar-project.properties
-      uses: actions/github-script@v7
+    # The scanner reads the repo's sonar-project.properties and takes these properties on top, as JSON in
+    # SONARQUBE_SCANNER_PARAMS. A push to a branch with an open PR is analysed as that PR, so SonarQube
+    # decorates it.
+    - name: Name the branch or PR
+      uses: actions/github-script@v9
+      env:
+        COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       with:
         script: |
-          const fs = require('fs');
-
-          // It must be an absolute path to support ESM import (https://github.com/actions/github-script?tab=readme-ov-file#use-esm-import).
-          const localConfigPath = `${process.env.GITHUB_WORKSPACE}/sonar-project.properties.mjs`;
-
-          if (!fs.existsSync(localConfigPath)) {
-            console.log(`No sonar-project.properties.mjs found (checked using path ${localConfigPath})`);
-            return;
-          } else {
-            console.log(`Found sonar-project.properties.mjs at ${localConfigPath}`);
-          }
-
-          const isPR = Boolean(${{ steps.checkPr.outputs.number }});
-          const branchName = isPR ? undefined : '${{ github.ref_name }}';
-
-          let config = {
-            'sonar.projectVersion': '${{ github.sha }}',
-            'sonar.pullrequest.key': '${{ steps.checkPr.outputs.number }}',
-            'sonar.pullrequest.branch': '${{ steps.checkPr.outputs.pr.head.ref }}',
-            'sonar.pullrequest.base': '${{ steps.checkPr.outputs.pr.base.ref }}',
-            'sonar.pullrequest.github.repository': '${{ github.repository }}',
-          };
-
-          // There must not be any `sonar.branch` properties like `sonar.branch.name` arguments set when you analyze a pull-request.
-          // These properties indicate to sonar that a branch is being analyzed rather than a pull-request so no pull-request decoration will be executed.
-          if (branchName) {
-            config['sonar.branch.name'] = branchName;
-          }
-
-          try {
-            const { default: importedLocalConfig } = await import(localConfigPath);
-            config = { ...config, ...importedLocalConfig };
-          } catch (importError) {
-            console.error(importError);
-            console.log(`Could not import sonar-project.properties.mjs; a default configuration will be used`);
-          }
-
-          console.log('SonarQube config:', config);
-
-          const lines = Object.entries(config)
-            .filter(([, v]) => v)
-            .map(([k, v]) => `${k}=${v}`)
-            .join('\n');
-
-          fs.writeFileSync('./sonar-project.properties', lines);
+          const commit = process.env.COMMIT_SHA;
+          const { data: pullRequests } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+            ...context.repo,
+            commit_sha: commit,
+          });
+          const pr = pullRequests.find((candidate) => candidate.state === 'open' && candidate.head.sha === commit);
+          // A branch property makes SonarQube analyse a branch, so a PR analysis must not carry one.
+          const params = pr
+            ? {
+                'sonar.pullrequest.key': String(pr.number),
+                'sonar.pullrequest.branch': pr.head.ref,
+                'sonar.pullrequest.base': pr.base.ref,
+                'sonar.pullrequest.github.repository': process.env.GITHUB_REPOSITORY,
+              }
+            : { 'sonar.branch.name': process.env.GITHUB_REF_NAME };
+          params['sonar.projectVersion'] = commit;
+          console.log('SonarQube parameters:', params);
+          core.exportVariable('SONARQUBE_SCANNER_PARAMS', JSON.stringify(params));
 
     - name: SonarQube scan
-      uses: sonarsource/sonarqube-scan-action@v5.2
+      uses: SonarSource/sonarqube-scan-action@v8
       env:
         SONAR_TOKEN: ${{ inputs.sonar-token }}
         SONAR_HOST_URL: ${{ inputs.sonar-host-url }}
 
-    # If you wish to fail / not fail your job when the Quality Gate is red, uncomment / comment the
-    # following lines.
+    # A red Quality Gate fails this step, so the commit shows a failed check.
     - name: SonarQube quality gate
-      uses: sonarsource/sonarqube-quality-gate-action@v1.2.0
+      uses: SonarSource/sonarqube-quality-gate-action@v1
       env:
         SONAR_TOKEN: ${{ inputs.sonar-token }}
         SONAR_HOST_URL: ${{ inputs.sonar-host-url }}
-
-    - name: Remove sonar-project.properties
-      run: rm sonar-project.properties
-      shell: bash

@@ -1,0 +1,70 @@
+# Rolls a released version onto a track: reads the image digest from the GitHub Release `v<version>` that
+# release-image.yml published, and hands it over SSH to swarm-roll on kk-forge. The job runs in the GitHub
+# Environment named by the track, whose secret DEPLOY_SSH_KEY is that repo's key for that track. The server
+# decides which service the key reaches. Production takes stable versions only.
+name: Deploy image
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: The released version, without the v, such as 1.4.0 or 1.5.0-dev.12
+        required: true
+        type: string
+      track:
+        description: The GitHub Environment and swarm-roll track, such as production or staging
+        required: true
+        type: string
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, swarm]
+    # Two deploys to one track queue up, so the last one started is the one that stays.
+    concurrency:
+      group: deploy-${{ github.repository }}-${{ inputs.track }}
+      cancel-in-progress: false
+    environment: ${{ inputs.track }}
+    permissions:
+      contents: read
+    steps:
+      - name: Find the released image
+        id: image
+        env:
+          VERSION: ${{ inputs.version }}
+          TRACK: ${{ inputs.track }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ "$TRACK" = production ] && [[ "$VERSION" == *-* ]]; then
+            echo "::error::Production takes stable versions only, not $VERSION"
+            exit 1
+          fi
+          release=$(curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/releases/tags/v$VERSION")
+          image=$(grep -o 'dr\.kk-forge\.com/[a-z0-9._/-]*@sha256:[0-9a-f]\{64\}' <<<"$release" | head -1 || true)
+          if [ -z "$image" ]; then
+            echo "::error::Release v$VERSION records no dr.kk-forge.com image"
+            exit 1
+          fi
+          echo "Deploying v$VERSION as $image"
+          echo "digest=${image#*@}" >>"$GITHUB_OUTPUT"
+
+      - name: Roll the service
+        env:
+          DIGEST: ${{ steps.image.outputs.digest }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          if ! command -v ssh >/dev/null; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq openssh-client >/dev/null
+          fi
+          key="$RUNNER_TEMP/deploy_key"
+          install -m 600 /dev/null "$key"
+          printf '%s\n' "$DEPLOY_SSH_KEY" >"$key"
+          host=209.127.202.156
+          echo "$host ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMvK2aJMwSYqRy45JmOh+YyvWCn6o6EjQk0W0A7s9OaL" \
+            >"$RUNNER_TEMP/known_hosts"
+          # authorized_keys on kk-forge turns the command into `swarm-roll <repo> <track> <digest>`.
+          ssh -i "$key" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/known_hosts" "deploy@$host" "$DIGEST"

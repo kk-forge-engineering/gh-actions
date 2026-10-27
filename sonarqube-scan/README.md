@@ -4,31 +4,30 @@ Runs SonarQube code analysis.
 
 ## Requirements
 
-- The code coverage report in the project root
-- To configure SonarQube `sonar-project.properties` needs to be provided as a `sonar-project.properties.mjs` file in the project root:
+- `sonar-project.properties` at the repo root. The action adds the branch or pull request and the commit, so the file holds only what belongs to the repo:
 
-```js
-// sonar-project.properties.mjs
-export default {
-  'sonar.projectKey': 'ProjectName',
+```properties
+sonar.projectKey=ProjectName
 
-  'sonar.javascript.lcov.reportPaths': 'coverage/lcov.info',
-  'sonar.testExecutionReportPaths': 'coverage/test-report.xml',
+sonar.javascript.lcov.reportPaths=coverage/lcov.info
+sonar.testExecutionReportPaths=coverage/test-report.xml
 
-  'sonar.sources': ['packages/backend/src', 'packages/shared/src', 'packages/web/src'].join(','),
-  // SonarQube supports limited wildcards (https://docs.sonarqube.org/latest/project-administration/narrowing-the-focus).
-  // Exclude test files from analysis.
-  'sonar.exclusions': ['**/*.test.*', '**/*.spec.*', '**/*.e2e-spec.*'].join(','),
+sonar.sources=packages/backend/src,packages/shared/src,packages/web/src
+# SonarQube reads a test execution report only for files it indexed as tests.
+sonar.exclusions=**/*.test.*,**/*.spec.*
+sonar.tests=packages/backend/src,packages/shared/src,packages/web/src
+sonar.test.inclusions=**/*.test.*,**/*.spec.*
 
-  'sonar.coverage.exclusions': ['packages/backend/src/migrations/*', 'packages/backend/src/dbUtils.ts'].join(','),
-};
+sonar.coverage.exclusions=packages/backend/src/migrations/*,packages/backend/src/dbUtils.ts
 ```
+
+- The coverage reports that the file names. The job writes them before this action runs.
 
 ## Usage
 
 ```yml
 - name: SonarQube scan
-  uses: karpov-kir/github-actions/sonarqube-scan@main
+  uses: kk-forge-engineering/gh-actions/sonarqube-scan@v1
   with:
     sonar-token: ${{ secrets.SONAR_TOKEN }}
     sonar-host-url: ${{ secrets.SONAR_HOST_URL }}
@@ -36,54 +35,4 @@ export default {
 
 ## Full example
 
-```yml
-name: CI
-on: [push]
-jobs:
-  install:
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Prepare NPM
-        uses: karpov-kir/github-actions/npm-prepare@main
-
-  test:
-    runs-on: ubuntu-24.04
-    needs: install
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Prepare NPM
-        uses: karpov-kir/github-actions/npm-prepare@main
-
-      - name: Initialize coverage cache
-        uses: actions/cache@v4
-        with:
-          path: ./coverage
-          key: ${{ runner.os }}-coverage-${{ github.sha }}
-
-      - name: Test
-        run: npm run test
-
-  analyze:
-    runs-on: ubuntu-24.04
-    needs: test
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Restore coverage cache
-        uses: actions/cache@v4
-        with:
-          path: ./coverage
-          key: ${{ runner.os }}-coverage-${{ github.sha }}
-
-      - name: SonarQube scan
-        uses: karpov-kir/github-actions/sonarqube-scan@main
-        with:
-          sonar-token: ${{ secrets.SONAR_TOKEN }}
-          sonar-host-url: ${{ secrets.SONAR_HOST_URL }}
-```
+The [Sonar workflow](/.github/workflows/sonar.yml) runs a repo's tests with coverage and then this action in one job. Its caller is in the [root README](/README.md#workflows).
