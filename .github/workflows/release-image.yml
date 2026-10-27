@@ -1,7 +1,7 @@
 # Builds a repo's image on the kk-forge runner, pushes it to dr.kk-forge.com under its version, and publishes
 # a GitHub Release `v<version>` that records the image digest. deploy-image.yml deploys from that record.
 # A stable X.Y.Z comes from the default branch only, and also moves `latest`. A dev X.Y.Z-dev.N comes from
-# any branch. The caller passes the org secret DOCKER_REGISTRY_PASSWORD.
+# any branch. The caller passes its repo secret DOCKER_REGISTRY_PASSWORD.
 name: Release image
 
 on:
@@ -29,7 +29,7 @@ on:
         default: Dockerfile
     secrets:
       DOCKER_REGISTRY_PASSWORD:
-        description: The password of the registry user ci
+        description: The password of the registry user named after the calling repo
         required: true
 
 jobs:
@@ -80,10 +80,12 @@ jobs:
           echo "Releasing $version after ${latest:-no stable release}"
           echo "version=$version" >>"$GITHUB_OUTPUT"
 
+      # Each repo has a registry user of its own name, so one repo's password can be rotated or revoked alone.
       - name: Log in to dr.kk-forge.com
         env:
+          DOCKER_REGISTRY_USER: ${{ github.event.repository.name }}
           DOCKER_REGISTRY_PASSWORD: ${{ secrets.DOCKER_REGISTRY_PASSWORD }}
-        run: printf '%s' "$DOCKER_REGISTRY_PASSWORD" | docker login dr.kk-forge.com --username ci --password-stdin
+        run: printf '%s' "$DOCKER_REGISTRY_PASSWORD" | docker login dr.kk-forge.com --username "$DOCKER_REGISTRY_USER" --password-stdin
 
       - name: Build and push
         id: build
