@@ -17,7 +17,7 @@ jobs:
     runs-on: ${{ github.event.repository.private && fromJSON('["self-hosted","swarm"]') || 'ubuntu-24.04' }}
     # A newer push to the same branch makes this run's result moot, and the kk-forge runner takes one job at a time.
     concurrency:
-      group: ci-${{ github.repository }}-${{ github.ref }}
+      group: ci-${{ github.workflow }}-${{ github.ref }}
       cancel-in-progress: true
     permissions:
       contents: read
@@ -27,6 +27,8 @@ jobs:
         with:
           # SonarQube reads the history to tell new code from old.
           fetch-depth: 0
+          # `setup` runs third-party install scripts, so the token stays out of .git/config.
+          persist-credentials: false
 
       - name: Install the tools from mise.toml
         uses: jdx/mise-action@v5
@@ -35,9 +37,19 @@ jobs:
 
       - run: mise run check:ci
 
+      - name: Check the SonarQube token
+        if: hashFiles('sonar-project.properties') != ''
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          if [ -z "$SONAR_TOKEN" ]; then
+            echo "::error::sonar-project.properties exists, but the caller passed no SONAR_TOKEN"
+            exit 1
+          fi
+
       - name: SonarQube scan
         if: hashFiles('sonar-project.properties') != ''
-        uses: kk-forge-engineering/gh-actions/sonarqube-scan@v1
+        uses: kk-forge-engineering/gh-actions/sonarqube-scan@v2
         with:
           sonar-token: ${{ secrets.SONAR_TOKEN }}
           sonar-host-url: https://sq.kk-forge.com

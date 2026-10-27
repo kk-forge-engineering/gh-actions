@@ -1,10 +1,10 @@
 # GitHub actions
 
-Reusable GitHub workflows and actions. Pin them to the major tag, such as `@v1`. The tag moves to each compatible release.
+Reusable GitHub workflows and actions. Pin them to the major tag, such as `@v2`. The tag moves to each compatible release.
 
 ## Workflows
 
-- [CI](/.github/workflows/ci.yml) installs a repo's tools from `mise.toml`, runs `mise run setup` and `mise run check:ci`, then [SonarQube scan](/sonarqube-scan) when the repo has a `sonar-project.properties`. A private repo runs on the self-hosted runner, a public one on a hosted runner. The caller:
+- [CI](/.github/workflows/ci.yml) installs a repo's tools from `mise.toml`, runs `mise run setup` and `mise run check:ci`, then [SonarQube scan](/sonarqube-scan) when the repo has a `sonar-project.properties`. The repo's `check:ci` writes the coverage reports Sonar reads. A private repo runs on the self-hosted runner, a public one on a hosted runner. The workflow reads the visibility from the event's repository, so call it from `push`, `pull_request` or `workflow_dispatch`. The caller:
   ```yaml
   name: CI
   on:
@@ -12,7 +12,7 @@ Reusable GitHub workflows and actions. Pin them to the major tag, such as `@v1`.
       branches: ["**"]
   jobs:
     ci:
-      uses: kk-forge-engineering/gh-actions/.github/workflows/ci.yml@v1
+      uses: kk-forge-engineering/gh-actions/.github/workflows/ci.yml@v2
       permissions: { contents: read, pull-requests: read }
       secrets: { SONAR_TOKEN: "${{ secrets.SONAR_TOKEN }}" }
   ```
