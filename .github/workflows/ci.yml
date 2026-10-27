@@ -35,8 +35,9 @@ jobs:
 
       - run: mise run setup
 
+      # Every task runs to its end even after one fails, so the coverage reports are complete for the scan.
       - id: check
-        run: mise run check:ci
+        run: mise run --continue-on-error check:ci
 
       # A red check:ci still sends its reports, so SonarQube's quality gate on new code can judge a pull request.
       - id: token
