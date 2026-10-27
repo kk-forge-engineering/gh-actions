@@ -35,7 +35,8 @@ jobs:
 
       - run: mise run setup
 
-      # mise runs every task to its end after one fails, so the scan gets complete coverage reports.
+      # check:ci depends on lint, build and test:ci. Without --continue-on-error, mise stops the others when one
+      # fails, and test:ci may die before it writes the coverage reports the scan sends.
       - id: check
         run: mise run --continue-on-error check:ci
 
