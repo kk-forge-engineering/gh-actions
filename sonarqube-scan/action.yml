@@ -11,26 +11,21 @@ inputs:
 runs:
   using: "composite"
   steps:
-    # A push to a branch with an open PR is analysed as that PR, so SonarQube decorates it.
-    - name: Check PR
-      uses: 8BitJonny/gh-get-current-pr@4056877062a1f3b624d5d4c2bedefa9cf51435c9 # 4.0.0
-      id: checkPr
-      with:
-        filterOutClosed: true
-        sha: ${{ github.event.pull_request.head.sha }}
-
     # The scanner reads the repo's sonar-project.properties and takes these properties on top, as JSON in
-    # SONARQUBE_SCANNER_PARAMS. JSON keeps a branch name intact whatever characters it holds.
+    # SONARQUBE_SCANNER_PARAMS. A push to a branch with an open PR is analysed as that PR, so SonarQube
+    # decorates it.
     - name: Name the branch or PR
       uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
       env:
-        PR_JSON: ${{ steps.checkPr.outputs.pr }}
-        SONAR_HOST_URL: ${{ inputs.sonar-host-url }}
+        COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       with:
         script: |
-          // gh-get-current-pr can return a merged PR that shares the commit with an open one.
-          const found = process.env.PR_JSON ? JSON.parse(process.env.PR_JSON) : undefined;
-          const pr = found?.state === 'open' ? found : undefined;
+          const commit = process.env.COMMIT_SHA;
+          const { data: pullRequests } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+            ...context.repo,
+            commit_sha: commit,
+          });
+          const pr = pullRequests.find((candidate) => candidate.state === 'open' && candidate.head.sha === commit);
           // A branch property makes SonarQube analyse a branch, so a PR analysis must not carry one.
           const params = pr
             ? {
@@ -40,9 +35,7 @@ runs:
                 'sonar.pullrequest.github.repository': process.env.GITHUB_REPOSITORY,
               }
             : { 'sonar.branch.name': process.env.GITHUB_REF_NAME };
-          params['sonar.projectVersion'] = process.env.GITHUB_SHA;
-          // The repo's sonar-project.properties cannot send the token to another host.
-          params['sonar.host.url'] = process.env.SONAR_HOST_URL;
+          params['sonar.projectVersion'] = commit;
           console.log('SonarQube parameters:', params);
           core.exportVariable('SONARQUBE_SCANNER_PARAMS', JSON.stringify(params));
 
