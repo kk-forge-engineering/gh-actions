@@ -8,7 +8,7 @@ Installs Bun, restores the Bun install cache, installs dependencies using `bun i
 - name: Prepare Bun
   uses: kk-forge-engineering/gh-actions/bun-prepare@v1
   with:
-    bun-version: 1.2.17 # Optional, default is 1.2.17
+    bun-version: "1" # Optional, default is 1
 ```
 
 ## Full example

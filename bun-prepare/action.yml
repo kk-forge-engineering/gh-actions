@@ -3,7 +3,7 @@ name: Bun prepare
 inputs:
   bun-version:
     description: Bun version to use
-    default: 1.2.17
+    default: "1"
 
 runs:
   using: "composite"
