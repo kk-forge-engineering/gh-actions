@@ -8,7 +8,7 @@ on:
   workflow_call:
     inputs:
       image:
-        description: The image's repository in dr.kk-forge.com, such as rate-limiter
+        description: The image's repository in dr.kk-forge.com, such as my-service
         required: true
         type: string
       bump:
@@ -45,7 +45,7 @@ jobs:
       REPOSITORY: dr.kk-forge.com/${{ inputs.image }}
       IS_DEV: ${{ inputs.dev }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # The version comes from the tags.
           fetch-depth: 0
@@ -108,16 +108,15 @@ jobs:
             exit 1
           fi
           tags=(--tag "$REPOSITORY:$VERSION")
-          if [ "$IS_DEV" != true ]; then
-            # `docker stack deploy` resolves the stack's untagged image to latest.
-            tags+=(--tag "$REPOSITORY:latest")
-          fi
           # buildkitd starts empty for each job, so its layer cache lives in the registry. Dev builds keep their
           # own cache, so a stable release does not reuse a branch's layers by accident. REGISTRY_PASSWORD can
           # write either cache, so this split does not stop a hostile branch.
           cache="$REPOSITORY:buildcache"
           if [ "$IS_DEV" = true ]; then
             cache="$REPOSITORY:buildcache-dev"
+          else
+            # `docker stack deploy` resolves the stack's untagged image to latest.
+            tags+=(--tag "$REPOSITORY:latest")
           fi
           # --provenance=false pushes a plain manifest, so the digest is the image itself.
           docker buildx build "$CONTEXT" --file "$DOCKERFILE" --platform linux/amd64 --push --provenance=false \

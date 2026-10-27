@@ -27,7 +27,7 @@ sonar.coverage.exclusions=packages/backend/src/migrations/*,packages/backend/src
 
 ```yml
 - name: SonarQube scan
-  uses: kk-forge-engineering/gh-actions/sonarqube-scan@v1
+  uses: kk-forge-engineering/gh-actions/sonarqube-scan@<commit> # v1
   with:
     sonar-token: ${{ secrets.SONAR_TOKEN }}
     sonar-host-url: ${{ secrets.SONAR_HOST_URL }}
@@ -35,54 +35,4 @@ sonar.coverage.exclusions=packages/backend/src/migrations/*,packages/backend/src
 
 ## Full example
 
-```yml
-name: CI
-on: [push]
-jobs:
-  install:
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Prepare NPM
-        uses: kk-forge-engineering/gh-actions/npm-prepare@v1
-
-  test:
-    runs-on: ubuntu-24.04
-    needs: install
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Prepare NPM
-        uses: kk-forge-engineering/gh-actions/npm-prepare@v1
-
-      - name: Initialize coverage cache
-        uses: actions/cache@v6
-        with:
-          path: ./coverage
-          key: ${{ runner.os }}-coverage-${{ github.sha }}
-
-      - name: Test
-        run: npm run test
-
-  analyze:
-    runs-on: ubuntu-24.04
-    needs: test
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Restore coverage cache
-        uses: actions/cache@v6
-        with:
-          path: ./coverage
-          key: ${{ runner.os }}-coverage-${{ github.sha }}
-
-      - name: SonarQube scan
-        uses: kk-forge-engineering/gh-actions/sonarqube-scan@v1
-        with:
-          sonar-token: ${{ secrets.SONAR_TOKEN }}
-          sonar-host-url: ${{ secrets.SONAR_HOST_URL }}
-```
+The [Sonar workflow](/.github/workflows/sonar.yml) runs a repo's tests with coverage and then this action in one job. Its caller is in the [root README](/README.md#workflows).
