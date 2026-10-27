@@ -1,6 +1,6 @@
 # GitHub actions
 
-Reusable GitHub actions and workflows. Pin a caller to the commit of a release tag, with the tag in a comment. The major tag, such as `v1`, moves to each compatible release.
+Reusable GitHub actions and workflows. Pin them to the major tag, such as `@v1`. The tag moves to each compatible release.
 
 ## Actions
 
@@ -18,7 +18,7 @@ Reusable GitHub actions and workflows. Pin a caller to the commit of a release t
       branches: ["**"]
   jobs:
     sonar:
-      uses: kk-forge-engineering/gh-actions/.github/workflows/sonar.yml@<commit> # v1
+      uses: kk-forge-engineering/gh-actions/.github/workflows/sonar.yml@v1
       permissions: { contents: read, pull-requests: read }
       with:
         runs-on: '["self-hosted","swarm"]'

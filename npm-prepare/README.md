@@ -6,7 +6,7 @@ Installs Node.js, restores the NPM cache, installs dependencies using `npm ci`, 
 
 ```yml
 - name: Prepare NPM
-  uses: kk-forge-engineering/gh-actions/npm-prepare@<commit> # v1
+  uses: kk-forge-engineering/gh-actions/npm-prepare@v1
   with:
     node-version: 24 # Optional, default is 24
 ```
@@ -21,20 +21,20 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: actions/checkout@v7
 
       - name: Prepare NPM
-        uses: kk-forge-engineering/gh-actions/npm-prepare@<commit> # v1
+        uses: kk-forge-engineering/gh-actions/npm-prepare@v1
 
   lint:
     runs-on: ubuntu-24.04
     needs: install
     steps:
       - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: actions/checkout@v7
 
       - name: Prepare NPM
-        uses: kk-forge-engineering/gh-actions/npm-prepare@<commit> # v1
+        uses: kk-forge-engineering/gh-actions/npm-prepare@v1
 
       - name: Lint
         run: npm run lint
@@ -44,10 +44,10 @@ jobs:
     needs: install
     steps:
       - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: actions/checkout@v7
 
       - name: Prepare NPM
-        uses: kk-forge-engineering/gh-actions/npm-prepare@<commit> # v1
+        uses: kk-forge-engineering/gh-actions/npm-prepare@v1
 
       - name: Test
         run: npm run test

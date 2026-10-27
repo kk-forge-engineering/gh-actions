@@ -27,7 +27,7 @@ sonar.coverage.exclusions=packages/backend/src/migrations/*,packages/backend/src
 
 ```yml
 - name: SonarQube scan
-  uses: kk-forge-engineering/gh-actions/sonarqube-scan@<commit> # v1
+  uses: kk-forge-engineering/gh-actions/sonarqube-scan@v1
   with:
     sonar-token: ${{ secrets.SONAR_TOKEN }}
     sonar-host-url: ${{ secrets.SONAR_HOST_URL }}
