@@ -35,11 +35,12 @@ jobs:
 
       - run: mise run setup
 
-      # Every task runs to its end even after one fails, so the coverage reports are complete for the scan.
+      # mise runs every task to its end after one fails, so the scan gets complete coverage reports.
       - id: check
         run: mise run --continue-on-error check:ci
 
-      # A red check:ci still sends its reports, so SonarQube's quality gate on new code can judge a pull request.
+      # The token check and the scan run after a red check:ci too, so SonarQube's quality gate on new code
+      # still judges a pull request in a repo below the coverage floor. A failed setup skips check:ci, and so both.
       - id: token
         name: Check the SonarQube token
         if: ${{ !cancelled() && steps.check.outcome != 'skipped' && hashFiles('sonar-project.properties') != '' }}
