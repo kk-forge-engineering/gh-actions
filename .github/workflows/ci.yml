@@ -35,10 +35,13 @@ jobs:
 
       - run: mise run setup
 
-      - run: mise run check:ci
+      - id: check
+        run: mise run check:ci
 
-      - name: Check the SonarQube token
-        if: hashFiles('sonar-project.properties') != ''
+      # A red check:ci still sends its reports, so SonarQube's quality gate on new code can judge a pull request.
+      - id: token
+        name: Check the SonarQube token
+        if: ${{ !cancelled() && steps.check.outcome != 'skipped' && hashFiles('sonar-project.properties') != '' }}
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
@@ -48,7 +51,7 @@ jobs:
           fi
 
       - name: SonarQube scan
-        if: hashFiles('sonar-project.properties') != ''
+        if: ${{ !cancelled() && steps.token.outcome == 'success' }}
         uses: kk-forge-engineering/gh-actions/sonarqube-scan@v2
         with:
           sonar-token: ${{ secrets.SONAR_TOKEN }}
