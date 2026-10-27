@@ -35,10 +35,16 @@ jobs:
 
       - run: mise run setup
 
-      - run: mise run check:ci
+      # check:ci depends on lint, build and test:ci. Without --continue-on-error, mise stops the others when one
+      # fails, and test:ci may die before it writes the coverage reports the scan sends.
+      - id: check
+        run: mise run --continue-on-error check:ci
 
-      - name: Check the SonarQube token
-        if: hashFiles('sonar-project.properties') != ''
+      # The token check and the scan run after a red check:ci too, so SonarQube's quality gate on new code
+      # still judges a pull request in a repo below the coverage floor. A failed setup skips check:ci, and so both.
+      - id: token
+        name: Check the SonarQube token
+        if: ${{ !cancelled() && steps.check.outcome != 'skipped' && hashFiles('sonar-project.properties') != '' }}
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
@@ -48,7 +54,7 @@ jobs:
           fi
 
       - name: SonarQube scan
-        if: hashFiles('sonar-project.properties') != ''
+        if: ${{ !cancelled() && steps.token.outcome == 'success' }}
         uses: kk-forge-engineering/gh-actions/sonarqube-scan@v2
         with:
           sonar-token: ${{ secrets.SONAR_TOKEN }}
