@@ -1,6 +1,6 @@
 # Runs a repo's checks and, when the repo has a sonar-project.properties, its SonarQube analysis. The repo
-# keeps its tools in mise.toml and the tasks `setup` and `check:ci` there. A caller passes the secret
-# SONAR_TOKEN if it is analysed. This repo runs the same workflow on its own pushes.
+# keeps its tools in mise.toml and the tasks `setup` and `check:ci` there. A caller with a
+# sonar-project.properties passes the secret SONAR_TOKEN. This repo runs the same workflow on its own pushes.
 name: CI
 
 on:

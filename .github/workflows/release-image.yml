@@ -1,7 +1,7 @@
 # Builds a repo's image on the kk-forge runner, pushes it to dr.kk-forge.com under its version, and publishes
 # a GitHub Release `v<version>` that records the image digest. deploy-image.yml deploys from that record.
 # A stable X.Y.Z comes from the default branch only, and also moves `latest`. A dev X.Y.Z-dev.N comes from
-# any branch. The caller passes its repo secret DOCKER_REGISTRY_PASSWORD.
+# any branch.
 name: Release image
 
 on:

@@ -2,7 +2,7 @@
 # release-image.yml published, and hands it over SSH to swarm-roll on kk-forge. The job runs in the GitHub
 # Environment named by the track, whose secret DEPLOY_SSH_KEY is that repo's key for that track. The server
 # decides which service the key reaches. Production takes stable versions only.
-# The caller passes `secrets: inherit`: the environment's secret reaches this job only then.
+# The environment's secret reaches this job only when the caller passes `secrets: inherit`.
 name: Deploy image
 
 on:
