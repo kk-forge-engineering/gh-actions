@@ -1,0 +1,43 @@
+# Runs a repo's checks and, when the repo has a sonar-project.properties, its SonarQube analysis. The repo
+# keeps its tools in mise.toml and the tasks `setup` and `check:ci` there. A caller passes the secret
+# SONAR_TOKEN if it is analysed. This repo runs the same workflow on its own pushes.
+name: CI
+
+on:
+  workflow_call:
+    secrets:
+      SONAR_TOKEN:
+        required: false
+  push:
+    branches: ["**"]
+
+jobs:
+  ci:
+    # The kk-forge runner takes only the org's private repos, so a public repo runs on a hosted runner.
+    runs-on: ${{ github.event.repository.private && fromJSON('["self-hosted","swarm"]') || 'ubuntu-24.04' }}
+    # A newer push to the same branch makes this run's result moot, and the kk-forge runner takes one job at a time.
+    concurrency:
+      group: ci-${{ github.repository }}-${{ github.ref }}
+      cancel-in-progress: true
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # SonarQube reads the history to tell new code from old.
+          fetch-depth: 0
+
+      - name: Install the tools from mise.toml
+        uses: jdx/mise-action@v5
+
+      - run: mise run setup
+
+      - run: mise run check:ci
+
+      - name: SonarQube scan
+        if: hashFiles('sonar-project.properties') != ''
+        uses: kk-forge-engineering/gh-actions/sonarqube-scan@v1
+        with:
+          sonar-token: ${{ secrets.SONAR_TOKEN }}
+          sonar-host-url: https://sq.kk-forge.com

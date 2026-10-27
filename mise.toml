@@ -1,0 +1,20 @@
+[tools]
+actionlint = "1"
+shellcheck = "0"
+
+[tasks.setup]
+description = "Install every dependency (none here)"
+run = "true"
+
+# actionlint also runs shellcheck over every `run:` script in the workflows.
+[tasks.lint]
+description = "Every linter"
+run = "actionlint"
+
+[tasks.check]
+description = "Everything that must be green before a commit"
+depends = ["lint"]
+
+[tasks."check:ci"]
+description = "check, as CI runs it"
+depends = ["lint"]

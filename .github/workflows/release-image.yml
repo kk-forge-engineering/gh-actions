@@ -144,7 +144,8 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # deploy-image.yml reads the digest from this body.
+          # deploy-image.yml reads the digest from this body. The backticks are markdown in the release body.
+          # shellcheck disable=SC2016
           body=$(printf '{"tag_name":"v%s","target_commitish":"%s","name":"v%s","body":"Image: `%s`","prerelease":%s,"make_latest":"%s","generate_release_notes":true}' \
             "$VERSION" "$GITHUB_SHA" "$VERSION" "$IMAGE" "$IS_DEV" "$([ "$IS_DEV" = true ] && echo false || echo true)")
           curl --fail-with-body --silent --show-error -X POST \
