@@ -13,8 +13,7 @@ sonar.javascript.lcov.reportPaths=coverage/lcov.info
 sonar.testExecutionReportPaths=coverage/test-report.xml
 
 sonar.sources=packages/backend/src,packages/shared/src,packages/web/src
-# Test files are indexed as tests, not as sources. SonarQube drops a test execution report for files it did
-# not index as tests.
+# SonarQube reads a test execution report only for files it indexed as tests.
 sonar.exclusions=**/*.test.*,**/*.spec.*
 sonar.tests=packages/backend/src,packages/shared/src,packages/web/src
 sonar.test.inclusions=**/*.test.*,**/*.spec.*
@@ -22,7 +21,7 @@ sonar.test.inclusions=**/*.test.*,**/*.spec.*
 sonar.coverage.exclusions=packages/backend/src/migrations/*,packages/backend/src/dbUtils.ts
 ```
 
-- The coverage reports the file names, written before the scan
+- The coverage reports that the file names. The job writes them before this action runs.
 
 ## Usage
 

@@ -10,7 +10,7 @@ Reusable GitHub actions and workflows. Pin them to the major tag, such as `@v1`.
 
 ## Workflows
 
-- [Sonar](/.github/workflows/sonar.yml) installs a repo's tools from `mise.toml`, runs its tests with coverage and runs [SonarQube scan](/sonarqube-scan). A caller on the kk-forge runner:
+- [Sonar](/.github/workflows/sonar.yml) installs a repo's tools from `mise.toml`, runs its tests with coverage and runs [SonarQube scan](/sonarqube-scan). A caller on a self-hosted runner:
   ```yaml
   name: Sonar
   on: [push]
@@ -23,5 +23,5 @@ Reusable GitHub actions and workflows. Pin them to the major tag, such as `@v1`.
         test-command: mise run test:ci
       secrets: { SONAR_TOKEN: "${{ secrets.SONAR_TOKEN }}" }
   ```
-  A public repo passes a hosted runner, such as `'"ubuntu-24.04"'`. The kk-forge runner takes jobs from the org's private repos only.
-- [Release image](/.github/workflows/release-image.yml) and [Deploy image](/.github/workflows/deploy-image.yml) release a versioned image to `dr.kk-forge.com` and roll it onto a Swarm service on kk-forge. They run on the kk-forge runner. Their setup and callers are in the project-orchestration README, under "How to release and deploy an image from CI".
+  A public repo passes a hosted runner, such as `'"ubuntu-24.04"'`.
+- [Release image](/.github/workflows/release-image.yml) builds a repo's image on a self-hosted runner with its own `buildkitd`, pushes it under the next SemVer and records the digest in a GitHub Release. [Deploy image](/.github/workflows/deploy-image.yml) sends a release's digest over SSH to a forced command on the server, which rolls one Swarm service onto it. Both need the server side they were built for: the runner, the registry and the forced command.
