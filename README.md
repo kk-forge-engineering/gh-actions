@@ -1,29 +1,30 @@
 # GitHub actions
 
-Reusable GitHub actions and workflows. Pin them to the major tag, such as `@v1`. The tag moves to each compatible release.
-
-## Actions
-
-- [SonarQube scan](/sonarqube-scan)
-- [NPM prepare](/npm-prepare)
-- [Bun prepare](/bun-prepare)
+Reusable GitHub workflows and actions. Pin them to the major tag, such as `@v2`. The tag moves to each compatible release.
 
 ## Workflows
 
-- [Sonar](/.github/workflows/sonar.yml) installs a repo's tools from `mise.toml`, runs its tests with coverage and runs [SonarQube scan](/sonarqube-scan). A caller on a self-hosted runner:
+- [CI](/.github/workflows/ci.yml) installs a repo's tools from `mise.toml`, runs `mise run setup` and `mise run check:ci`, then [SonarQube scan](/sonarqube-scan) when the repo has a `sonar-project.properties`. Such a repo's `check:ci` writes the coverage reports Sonar reads, and its caller passes `SONAR_TOKEN`. A private repo runs on the self-hosted runner, a public one on a hosted runner. The workflow reads the visibility from the event's repository, so call it from `push`, `pull_request` or `workflow_dispatch`. The caller:
   ```yaml
-  name: Sonar
+  name: CI
   on:
     push:
       branches: ["**"]
   jobs:
-    sonar:
-      uses: kk-forge-engineering/gh-actions/.github/workflows/sonar.yml@v1
+    ci:
+      uses: kk-forge-engineering/gh-actions/.github/workflows/ci.yml@v2
       permissions: { contents: read, pull-requests: read }
-      with:
-        runs-on: '["self-hosted","swarm"]'
-        test-command: mise run test:ci
       secrets: { SONAR_TOKEN: "${{ secrets.SONAR_TOKEN }}" }
   ```
-  A public repo passes a hosted runner, such as `'"ubuntu-24.04"'`.
-- [Release image](/.github/workflows/release-image.yml) builds a repo's image on a self-hosted runner with its own `buildkitd`, pushes it under the next SemVer and records the digest in a GitHub Release. [Deploy image](/.github/workflows/deploy-image.yml) sends a release's digest over SSH to a forced command on the server, which rolls one Swarm service onto it. Both need the server side they were built for: the runner, the registry and the forced command.
+- [Release image](/.github/workflows/release-image.yml) builds a repo's image on the self-hosted runner with its own `buildkitd`, pushes it under the next SemVer and records the digest in a GitHub Release.
+- [Deploy image](/.github/workflows/deploy-image.yml) sends a release's digest over SSH to a forced command on the server, which rolls one Swarm service onto it. The caller passes `secrets: inherit`, so the environment's `DEPLOY_SSH_KEY` reaches the job.
+
+Release image and Deploy image work only with the kk-forge server: its runner, its registry and its forced command.
+
+## Actions
+
+- [SonarQube scan](/sonarqube-scan)
+
+## Checks
+
+`mise run check` runs actionlint, which also runs shellcheck over every `run:` script. The CI workflow runs it on every push to this repo.

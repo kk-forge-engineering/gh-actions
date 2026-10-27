@@ -1,6 +1,6 @@
-# Overview
+# SonarQube scan
 
-Runs SonarQube code analysis.
+Runs SonarQube analysis, then fails the job when the Quality Gate is red.
 
 ## Requirements
 
@@ -22,12 +22,14 @@ sonar.coverage.exclusions=packages/backend/src/migrations/*,packages/backend/src
 ```
 
 - The coverage reports that the file names. The job writes them before this action runs.
+- A checkout with `fetch-depth: 0`. SonarQube reads the history to tell new code from old.
+- `pull-requests: read` on the job. The action looks up the open pull request for the commit.
 
 ## Usage
 
 ```yml
 - name: SonarQube scan
-  uses: kk-forge-engineering/gh-actions/sonarqube-scan@v1
+  uses: kk-forge-engineering/gh-actions/sonarqube-scan@v2
   with:
     sonar-token: ${{ secrets.SONAR_TOKEN }}
     sonar-host-url: ${{ secrets.SONAR_HOST_URL }}
@@ -35,4 +37,4 @@ sonar.coverage.exclusions=packages/backend/src/migrations/*,packages/backend/src
 
 ## Full example
 
-The [Sonar workflow](/.github/workflows/sonar.yml) runs a repo's tests with coverage and then this action in one job. Its caller is in the [root README](/README.md#workflows).
+The [CI workflow](/.github/workflows/ci.yml) runs this action after the repo's `check:ci`. Its caller is in the [root README](/README.md#workflows).

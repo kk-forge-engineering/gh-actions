@@ -1,0 +1,4 @@
+self-hosted-runner:
+  # The kk-forge runner, which the release and deploy workflows and private repos' CI run on.
+  labels:
+    - swarm
