@@ -28,7 +28,7 @@ sonar.coverage.exclusions=packages/backend/src/migrations/*,packages/backend/src
 
 ```yml
 - name: SonarQube scan
-  uses: kk-forge-engineering/github-actions/sonarqube-scan@v1
+  uses: kk-forge-engineering/gh-actions/sonarqube-scan@v1
   with:
     sonar-token: ${{ secrets.SONAR_TOKEN }}
     sonar-host-url: ${{ secrets.SONAR_HOST_URL }}
@@ -47,7 +47,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Prepare NPM
-        uses: kk-forge-engineering/github-actions/npm-prepare@v1
+        uses: kk-forge-engineering/gh-actions/npm-prepare@v1
 
   test:
     runs-on: ubuntu-24.04
@@ -57,7 +57,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Prepare NPM
-        uses: kk-forge-engineering/github-actions/npm-prepare@v1
+        uses: kk-forge-engineering/gh-actions/npm-prepare@v1
 
       - name: Initialize coverage cache
         uses: actions/cache@v6
@@ -82,7 +82,7 @@ jobs:
           key: ${{ runner.os }}-coverage-${{ github.sha }}
 
       - name: SonarQube scan
-        uses: kk-forge-engineering/github-actions/sonarqube-scan@v1
+        uses: kk-forge-engineering/gh-actions/sonarqube-scan@v1
         with:
           sonar-token: ${{ secrets.SONAR_TOKEN }}
           sonar-host-url: ${{ secrets.SONAR_HOST_URL }}

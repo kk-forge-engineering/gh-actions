@@ -16,7 +16,7 @@ Reusable GitHub actions and workflows. Pin them to the major tag, such as `@v1`.
   on: [push]
   jobs:
     sonar:
-      uses: kk-forge-engineering/github-actions/.github/workflows/sonar.yml@v1
+      uses: kk-forge-engineering/gh-actions/.github/workflows/sonar.yml@v1
       permissions: { contents: read, pull-requests: read }
       with:
         runs-on: '["self-hosted","swarm"]'

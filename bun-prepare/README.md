@@ -6,7 +6,7 @@ Installs Bun, restores the Bun install cache, installs dependencies using `bun i
 
 ```yml
 - name: Prepare Bun
-  uses: kk-forge-engineering/github-actions/bun-prepare@v1
+  uses: kk-forge-engineering/gh-actions/bun-prepare@v1
   with:
     bun-version: 1.2.17 # Optional, default is 1.2.17
 ```
@@ -24,7 +24,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Prepare Bun
-        uses: kk-forge-engineering/github-actions/bun-prepare@v1
+        uses: kk-forge-engineering/gh-actions/bun-prepare@v1
 
   lint:
     runs-on: ubuntu-24.04
@@ -34,7 +34,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Prepare Bun
-        uses: kk-forge-engineering/github-actions/bun-prepare@v1
+        uses: kk-forge-engineering/gh-actions/bun-prepare@v1
 
       - name: Lint
         run: bun run lint
@@ -47,7 +47,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Prepare Bun
-        uses: kk-forge-engineering/github-actions/bun-prepare@v1
+        uses: kk-forge-engineering/gh-actions/bun-prepare@v1
 
       - name: Test
         run: bun run test

@@ -44,7 +44,7 @@ jobs:
         run: bash -c "$TEST_COMMAND"
 
       - name: SonarQube scan
-        uses: kk-forge-engineering/github-actions/sonarqube-scan@v1
+        uses: kk-forge-engineering/gh-actions/sonarqube-scan@v1
         with:
           sonar-token: ${{ secrets.SONAR_TOKEN }}
           sonar-host-url: ${{ inputs.sonar-host-url }}
