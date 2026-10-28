@@ -39,6 +39,13 @@ runs:
           console.log('SonarQube parameters:', params);
           core.exportVariable('SONARQUBE_SCANNER_PARAMS', JSON.stringify(params));
 
+    # The scan action checks the scanner's signature, and gpg fetches SonarSource's key through dirmngr. The
+    # self-hosted runner's image ships gpg without dirmngr.
+    - name: Install dirmngr
+      if: runner.os == 'Linux'
+      shell: bash
+      run: command -v dirmngr >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends dirmngr; }
+
     - name: SonarQube scan
       uses: SonarSource/sonarqube-scan-action@v8
       env:
