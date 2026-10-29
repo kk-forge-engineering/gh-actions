@@ -54,6 +54,9 @@ jobs:
         with:
           # The version comes from the tags.
           fetch-depth: 0
+          # No step runs git with credentials: the Release API creates the tag. So the write token stays out of
+          # .git/config, out of reach of the third-party action below.
+          persist-credentials: false
 
       - name: Pick the version
         id: version
@@ -84,6 +87,12 @@ jobs:
           fi
           echo "Releasing $version after ${latest:-no stable release}"
           echo "version=$version" >>"$GITHUB_OUTPUT"
+
+      # The gha cache needs the job's cache token, which GitHub hands only to actions, not to run steps. It runs
+      # before the registry login, so the registry password is not on disk yet.
+      - name: Expose the cache token to buildx
+        if: ${{ !github.event.repository.private && inputs.dev }}
+        uses: crazy-max/ghaction-github-runtime@v3
 
       # Each repo has a registry user of its own name, so one repo's password can be rotated or revoked alone.
       - name: Log in to dr.kk-forge.com
@@ -131,28 +140,23 @@ jobs:
           else
             docker buildx create --name kk-forge --use
           fi
-          # A version tag is never moved, so a deploy of that version always gets the same image. Every image is
-          # checked before any is pushed, so a refused version pushes nothing.
-          for name in "${names[@]}"; do
-            if found=$(docker buildx imagetools inspect "dr.kk-forge.com/$name:$VERSION" 2>&1); then
-              echo "::error::dr.kk-forge.com/$name:$VERSION is already in the registry"
-              exit 1
-            elif ! grep -q 'not found' <<<"$found"; then
-              echo "::error::Could not check dr.kk-forge.com/$name:$VERSION in the registry: $found"
-              exit 1
-            fi
-          done
+          # A version is taken only once its git tag exists, which the previous step refuses. A registry tag
+          # <name>:<version> without that git tag is left by a run that failed before its Release, and this build
+          # overwrites it. A deploy pins the digest from the Release, so the overwritten image was never deployed.
           refs=()
           for i in "${!names[@]}"; do
             repository=dr.kk-forge.com/${names[$i]}
             tags=(--tag "$repository:$VERSION")
-            # buildkitd starts empty for each job, so its layer cache lives in the registry. Dev builds keep their
-            # own cache, so a stable release does not reuse a branch's layers by accident. DOCKER_REGISTRY_PASSWORD can
-            # write either cache, so this split does not stop a hostile branch.
-            cache="$repository:buildcache"
-            if [ "$IS_DEV" = true ]; then
-              cache="$repository:buildcache-dev"
-            else
+            # The cache never lives in the registry: every repo's CI user can write every repository there, so one
+            # repo's CI could poison another's build. A stable release builds with no shared cache either: any
+            # workflow of this repo can write its gha cache, ci.yml's third-party install scripts included. The
+            # kk-forge runner's buildkitd starts empty for each job. Only a dev release on a hosted runner uses the
+            # gha cache, so a poisoned layer can reach only a dev image.
+            cache=()
+            if [ "$IS_PRIVATE" != true ] && [ "$IS_DEV" = true ]; then
+              cache=(--cache-from "type=gha,scope=dev/${names[$i]}" --cache-to "type=gha,scope=dev/${names[$i]},mode=max")
+            fi
+            if [ "$IS_DEV" != true ]; then
               # latest moves to each stable release, for a pull by hand.
               tags+=(--tag "$repository:latest")
             fi
@@ -162,8 +166,7 @@ jobs:
               --label "org.opencontainers.image.version=$VERSION" \
               --label "org.opencontainers.image.revision=$GITHUB_SHA" \
               --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
-              --cache-from "type=registry,ref=$cache" \
-              --cache-to "type=registry,ref=$cache,mode=max" \
+              "${cache[@]}" \
               --metadata-file "$RUNNER_TEMP/build.json"
             digest=$(sed -n 's/^ *"containerimage.digest": *"\(sha256:[0-9a-f]\{64\}\)".*/\1/p' "$RUNNER_TEMP/build.json")
             if [ -z "$digest" ]; then
