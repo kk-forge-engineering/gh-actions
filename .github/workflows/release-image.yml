@@ -1,30 +1,34 @@
-# Builds a repo's image on the kk-forge runner, pushes it to dr.kk-forge.com under its version, and publishes
-# a GitHub Release `v<version>` that records the image digest. deploy-image.yml deploys from that record.
-# A stable X.Y.Z comes from the default branch only, and also moves `latest`. A dev X.Y.Z-dev.N comes from
-# any branch.
+# Builds a repo's images, pushes each to dr.kk-forge.com under one version, and publishes a GitHub Release
+# `v<version>` whose body lists each image as dr.kk-forge.com/<name>@sha256:<digest>. project-orchestration's
+# `mise run deploy:<stack>` takes those references. A stable X.Y.Z comes from the default branch only, and also
+# moves `latest`. A dev X.Y.Z-dev.N comes from any branch.
 name: Release image
 
 on:
   workflow_call:
     inputs:
-      image:
-        description: The image's repository in dr.kk-forge.com, such as my-service
-        required: true
+      images:
+        description: One image per line, `<name> <context> <Dockerfile>`, such as `my-service . Dockerfile`; <name> is its repository in dr.kk-forge.com
         type: string
+        default: ""
+      image:
+        description: A single image's repository in dr.kk-forge.com, built from `context` and `dockerfile`; give it or `images`
+        type: string
+        default: ""
       bump:
         description: patch, minor or major, applied to the highest stable version tag
-        required: true
         type: string
+        default: patch
       dev:
         description: Release X.Y.Z-dev.N from the current branch, instead of X.Y.Z from the default branch
         type: boolean
         default: false
       context:
-        description: The build context
+        description: The build context of `image`
         type: string
         default: .
       dockerfile:
-        description: The Dockerfile, relative to the repo root
+        description: The Dockerfile of `image`, relative to the repo root
         type: string
         default: Dockerfile
     secrets:
@@ -34,7 +38,9 @@ on:
 
 jobs:
   release:
-    runs-on: [self-hosted, swarm]
+    # A public repo never runs on the kk-forge runner, as in ci.yml: a pull request from a fork would run someone
+    # else's code on the kk-forge server. So a public repo builds on a hosted runner.
+    runs-on: ${{ github.event.repository.private && fromJSON('["self-hosted","swarm"]') || 'ubuntu-24.04' }}
     # Two releases at once would pick the same version and both push its tag.
     concurrency:
       group: release-${{ github.repository }}
@@ -42,7 +48,6 @@ jobs:
     permissions:
       contents: write
     env:
-      REPOSITORY: dr.kk-forge.com/${{ inputs.image }}
       IS_DEV: ${{ inputs.dev }}
     steps:
       - uses: actions/checkout@v7
@@ -91,64 +96,99 @@ jobs:
         id: build
         env:
           VERSION: ${{ steps.version.outputs.version }}
+          IMAGES: ${{ inputs.images }}
+          IMAGE: ${{ inputs.image }}
           CONTEXT: ${{ inputs.context }}
           DOCKERFILE: ${{ inputs.dockerfile }}
+          IS_PRIVATE: ${{ github.event.repository.private }}
         run: |
           set -euo pipefail
-          # The launcher gives each kk-forge runner its own buildkitd at BUILDKIT_HOST.
-          if [ -z "${BUILDKIT_HOST:-}" ]; then
-            echo "::error::No BUILDKIT_HOST: this job runs only on the kk-forge runner"
+          if { [ -n "$IMAGES" ] && [ -n "$IMAGE" ]; } || { [ -z "$IMAGES" ] && [ -z "$IMAGE" ]; }; then
+            echo "::error::Give images or image, one of the two"
             exit 1
           fi
-          docker buildx create --name kk-forge --driver remote "$BUILDKIT_HOST" --use
-          # A version tag is never moved, so a deploy of that version always gets the same image.
-          if found=$(docker buildx imagetools inspect "$REPOSITORY:$VERSION" 2>&1); then
-            echo "::error::$REPOSITORY:$VERSION is already in the registry"
-            exit 1
-          elif ! grep -q 'not found' <<<"$found"; then
-            echo "::error::Could not check $REPOSITORY:$VERSION in the registry: $found"
-            exit 1
-          fi
-          tags=(--tag "$REPOSITORY:$VERSION")
-          # buildkitd starts empty for each job, so its layer cache lives in the registry. Dev builds keep their
-          # own cache, so a stable release does not reuse a branch's layers by accident. DOCKER_REGISTRY_PASSWORD can
-          # write either cache, so this split does not stop a hostile branch.
-          cache="$REPOSITORY:buildcache"
-          if [ "$IS_DEV" = true ]; then
-            cache="$REPOSITORY:buildcache-dev"
+          [ -n "$IMAGES" ] || IMAGES="$IMAGE $CONTEXT $DOCKERFILE"
+          names=() contexts=() dockerfiles=()
+          while read -r name context dockerfile rest; do
+            [ -n "$name" ] || continue
+            if ! [[ "$name" =~ ^[a-z0-9][a-z0-9._-]*$ && -n "$context" && -n "$dockerfile" && -z "$rest" ]]; then
+              echo "::error::An images line is <name> <context> <Dockerfile>, not: $name $context $dockerfile $rest"
+              exit 1
+            fi
+            for other in "${names[@]}"; do
+              [ "$other" != "$name" ] || { echo "::error::$name is listed twice"; exit 1; }
+            done
+            names+=("$name") contexts+=("$context") dockerfiles+=("$dockerfile")
+          done <<<"$IMAGES"
+          [ "${#names[@]}" -gt 0 ] || { echo "::error::images lists no image"; exit 1; }
+          if [ "$IS_PRIVATE" = true ]; then
+            # The launcher gives each kk-forge runner its own buildkitd at BUILDKIT_HOST.
+            if [ -z "${BUILDKIT_HOST:-}" ]; then
+              echo "::error::No BUILDKIT_HOST: a private repo builds only on the kk-forge runner"
+              exit 1
+            fi
+            docker buildx create --name kk-forge --driver remote "$BUILDKIT_HOST" --use
           else
-            # `docker stack deploy` resolves the stack's untagged image to latest.
-            tags+=(--tag "$REPOSITORY:latest")
+            docker buildx create --name kk-forge --use
           fi
-          # --provenance=false pushes a plain manifest, so the digest is the image itself.
-          docker buildx build "$CONTEXT" --file "$DOCKERFILE" --platform linux/amd64 --push --provenance=false \
-            "${tags[@]}" \
-            --label "org.opencontainers.image.version=$VERSION" \
-            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
-            --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
-            --cache-from "type=registry,ref=$cache" \
-            --cache-to "type=registry,ref=$cache,mode=max" \
-            --metadata-file "$RUNNER_TEMP/build.json"
-          digest=$(sed -n 's/^ *"containerimage.digest": *"\(sha256:[0-9a-f]\{64\}\)".*/\1/p' "$RUNNER_TEMP/build.json")
-          if [ -z "$digest" ]; then
-            echo "::error::The build reported no image digest"
-            exit 1
-          fi
-          echo "Pushed $REPOSITORY:$VERSION as $digest"
-          echo "image=$REPOSITORY@$digest" >>"$GITHUB_OUTPUT"
+          # A version tag is never moved, so a deploy of that version always gets the same image. Every image is
+          # checked before any is pushed, so a refused version pushes nothing.
+          for name in "${names[@]}"; do
+            if found=$(docker buildx imagetools inspect "dr.kk-forge.com/$name:$VERSION" 2>&1); then
+              echo "::error::dr.kk-forge.com/$name:$VERSION is already in the registry"
+              exit 1
+            elif ! grep -q 'not found' <<<"$found"; then
+              echo "::error::Could not check dr.kk-forge.com/$name:$VERSION in the registry: $found"
+              exit 1
+            fi
+          done
+          refs=()
+          for i in "${!names[@]}"; do
+            repository=dr.kk-forge.com/${names[$i]}
+            tags=(--tag "$repository:$VERSION")
+            # buildkitd starts empty for each job, so its layer cache lives in the registry. Dev builds keep their
+            # own cache, so a stable release does not reuse a branch's layers by accident. DOCKER_REGISTRY_PASSWORD can
+            # write either cache, so this split does not stop a hostile branch.
+            cache="$repository:buildcache"
+            if [ "$IS_DEV" = true ]; then
+              cache="$repository:buildcache-dev"
+            else
+              # latest moves to each stable release, for a pull by hand.
+              tags+=(--tag "$repository:latest")
+            fi
+            # --provenance=false pushes a plain manifest, so the digest is the image itself.
+            docker buildx build "${contexts[$i]}" --file "${dockerfiles[$i]}" --platform linux/amd64 --push --provenance=false \
+              "${tags[@]}" \
+              --label "org.opencontainers.image.version=$VERSION" \
+              --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+              --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+              --cache-from "type=registry,ref=$cache" \
+              --cache-to "type=registry,ref=$cache,mode=max" \
+              --metadata-file "$RUNNER_TEMP/build.json"
+            digest=$(sed -n 's/^ *"containerimage.digest": *"\(sha256:[0-9a-f]\{64\}\)".*/\1/p' "$RUNNER_TEMP/build.json")
+            if [ -z "$digest" ]; then
+              echo "::error::The build of ${names[$i]} reported no image digest"
+              exit 1
+            fi
+            echo "Pushed $repository:$VERSION as $digest"
+            refs+=("$repository@$digest")
+          done
+          echo "refs=${refs[*]}" >>"$GITHUB_OUTPUT"
 
       - name: Publish the release
         env:
           VERSION: ${{ steps.version.outputs.version }}
-          IMAGE: ${{ steps.build.outputs.image }}
+          REFS: ${{ steps.build.outputs.refs }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # deploy-image.yml reads the digest from this body. The backticks are markdown in the release body.
+          # The body lists one reference per line in a code block, ready to pass to `mise run deploy:<stack> --`. A
+          # reference holds no quote or backslash, so it goes into the JSON as it is, with \n between lines.
           # shellcheck disable=SC2016
-          body=$(printf '{"tag_name":"v%s","target_commitish":"%s","name":"v%s","body":"Image: `%s`","prerelease":%s,"make_latest":"%s","generate_release_notes":true}' \
-            "$VERSION" "$GITHUB_SHA" "$VERSION" "$IMAGE" "$IS_DEV" "$([ "$IS_DEV" = true ] && echo false || echo true)")
+          text='```\n'"${REFS// /\\n}"'\n```'
+          body=$(printf '{"tag_name":"v%s","target_commitish":"%s","name":"v%s","body":"%s","prerelease":%s,"make_latest":"%s","generate_release_notes":true}' \
+            "$VERSION" "$GITHUB_SHA" "$VERSION" "$text" "$IS_DEV" "$([ "$IS_DEV" = true ] && echo false || echo true)")
           curl --fail-with-body --silent --show-error -X POST \
             -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" \
             "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/releases" -d "$body" >/dev/null
-          echo "Released v$VERSION: $IMAGE" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "Released v$VERSION: $REFS" | tee -a "$GITHUB_STEP_SUMMARY"

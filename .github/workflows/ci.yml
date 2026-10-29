@@ -13,7 +13,8 @@ on:
 
 jobs:
   ci:
-    # The kk-forge runner takes only the org's private repos, so a public repo runs on a hosted runner.
+    # A public repo never runs on the kk-forge runner: a pull request from a fork would run someone else's code on
+    # the kk-forge server. So a public repo runs on a hosted runner.
     runs-on: ${{ github.event.repository.private && fromJSON('["self-hosted","swarm"]') || 'ubuntu-24.04' }}
     # A newer push to the same branch makes this run's result moot, and the kk-forge runner takes one job at a time.
     concurrency:

@@ -16,10 +16,21 @@ Reusable GitHub workflows and actions. Pin them to the major tag, such as `@v2`.
       permissions: { contents: read, pull-requests: read }
       secrets: { SONAR_TOKEN: "${{ secrets.SONAR_TOKEN }}" }
   ```
-- [Release image](/.github/workflows/release-image.yml) builds a repo's image on the self-hosted runner with its own `buildkitd`, pushes it under the next SemVer and records the digest in a GitHub Release.
-- [Deploy image](/.github/workflows/deploy-image.yml) sends a release's digest over SSH to a forced command on the server, which rolls one Swarm service onto it. The caller passes `secrets: inherit`, so the environment's `DEPLOY_SSH_KEY` reaches the job.
 
-Release image and Deploy image work only with the kk-forge server: its runner, its registry and its forced command.
+- [Release image](/.github/workflows/release-image.yml) builds a repo's images, pushes them to `dr.kk-forge.com` under the next SemVer, and publishes one GitHub Release whose body lists `dr.kk-forge.com/<name>@sha256:<digest>` for each image. `images` holds one `<name> <context> <Dockerfile>` per line. The older `image`, `context` and `dockerfile` inputs build one image. A private repo builds on the self-hosted runner with its own `buildkitd`, a public one on a hosted runner. A public repo never runs on the self-hosted runner, because a pull request from a fork would run someone else's code on the kk-forge server. A repo calls it as a second job of its CI caller, after `ci`, on its default branch only. The caller passes the repo's `DOCKER_REGISTRY_PASSWORD`:
+  ```yaml
+    release:
+      needs: ci
+      if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+      uses: kk-forge-engineering/gh-actions/.github/workflows/release-image.yml@v2
+      permissions: { contents: write }
+      with:
+        images: |
+          my-service . Dockerfile
+      secrets: { DOCKER_REGISTRY_PASSWORD: "${{ secrets.DOCKER_REGISTRY_PASSWORD }}" }
+  ```
+
+No workflow here deploys. project-orchestration deploys the references a Release lists, with an owner's Touch ID ([Release and deploy](https://github.com/kk-forge-engineering/project-orchestration/blob/main/docs/release-and-deploy.md)).
 
 ## Actions
 
