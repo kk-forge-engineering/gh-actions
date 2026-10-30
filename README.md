@@ -1,6 +1,6 @@
 # GitHub actions
 
-Reusable GitHub workflows and actions. Pin them to the major tag, such as `@v2`. The tag moves to each compatible release.
+Reusable GitHub workflows and actions. Pin them to the major tag, such as `@v3`. The tag moves to each compatible release. `v3` changed Release image's inputs, and `v2` keeps the earlier ones.
 
 ## Workflows
 
@@ -12,17 +12,24 @@ Reusable GitHub workflows and actions. Pin them to the major tag, such as `@v2`.
       branches: ["**"]
   jobs:
     ci:
-      uses: kk-forge-engineering/gh-actions/.github/workflows/ci.yml@v2
+      uses: kk-forge-engineering/gh-actions/.github/workflows/ci.yml@v3
       permissions: { contents: read, pull-requests: read }
       secrets: { SONAR_TOKEN: "${{ secrets.SONAR_TOKEN }}" }
   ```
 
-- [Release image](/.github/workflows/release-image.yml) builds a package's images, pushes them to `dr.kk-forge.com` under the package's version, and publishes one GitHub Release whose body lists `dr.kk-forge.com/<name>@sha256:<digest>` for each image. The version is what the caller's `version-task` prints, `X.Y.Z`. That task reads it from the package's version file, where a person raises it. It runs in a job of its own with a read-only token, and the job that builds and publishes runs none of the caller's tools. The tag is `<tag-prefix>v<version>`, with `tag-prefix` such as `backend-` in a repo of several packages. When the tag already points at this commit, the run ends green with no release. When it points at another commit, the run also ends green with no release, and warns that the version needs a raise. `images` holds one `<name> <context> <Dockerfile>` per line. A private repo builds on the self-hosted runner with its own `buildkitd`, a public one on a hosted runner. A public repo never runs on the self-hosted runner, because a pull request from a fork would run someone else's code on the kk-forge server. A repo calls it as a second job of its CI caller, after `ci`, on its default branch only. The caller passes the repo's `DOCKER_REGISTRY_PASSWORD`:
+- [Release image](/.github/workflows/release-image.yml) builds a package's images, pushes them to `dr.kk-forge.com` under the package's version, and publishes a GitHub Release `<tag-prefix>v<version>`. The Release body lists `dr.kk-forge.com/<name>@sha256:<digest>` for each image. When that tag already exists, the run ends green without a release, and warns when the tag points at another commit. A private repo builds on the self-hosted runner, a public one on a hosted runner. Its inputs:
+  - `images`, required: one `<name> <context> <Dockerfile>` per line, `<name>` being the image's repository in `dr.kk-forge.com`
+  - `version-task`, required: the caller's mise task that prints the version, `X.Y.Z`
+  - `tag-prefix`: goes before `v<version>`, such as `backend-` in a repo of several packages
+  - `dev`: releases `<version>-dev.<run number>` from any branch, where a stable release comes only from the default branch
+  - the secret `DOCKER_REGISTRY_PASSWORD`: the password of the registry user named after the repo
+
+  The caller runs it as a second job of its CI, after `ci`, on the default branch:
   ```yaml
     release:
       needs: ci
       if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-      uses: kk-forge-engineering/gh-actions/.github/workflows/release-image.yml@v2
+      uses: kk-forge-engineering/gh-actions/.github/workflows/release-image.yml@v3
       permissions: { contents: write }
       with:
         version-task: version
@@ -31,7 +38,7 @@ Reusable GitHub workflows and actions. Pin them to the major tag, such as `@v2`.
       secrets: { DOCKER_REGISTRY_PASSWORD: "${{ secrets.DOCKER_REGISTRY_PASSWORD }}" }
   ```
 
-No workflow here deploys. project-orchestration deploys the references a Release lists, with an owner's Touch ID ([Release and deploy](https://github.com/kk-forge-engineering/project-orchestration/blob/main/docs/release-and-deploy.md)).
+project-orchestration deploys the references a Release lists ([Release and deploy](https://github.com/kk-forge-engineering/project-orchestration/blob/main/docs/release-and-deploy.md)).
 
 ## Actions
 
