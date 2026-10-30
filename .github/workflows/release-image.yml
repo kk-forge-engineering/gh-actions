@@ -137,7 +137,7 @@ jobs:
           set -euo pipefail
           # The caller's task could write any outputs, so the version and the tag are bound to each other and to dev.
           suffix=''
-          [ "$IS_DEV" != true ] || suffix='-dev\.[0-9]+'
+          [ "$IS_DEV" != true ] || suffix="-dev\\.$GITHUB_RUN_NUMBER"
           if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+${suffix}$ && "$TAG" == "${TAG_PREFIX}v$VERSION" ]]; then
             echo "::error::The version job passed «${VERSION}» and «${TAG}»"
             exit 1
