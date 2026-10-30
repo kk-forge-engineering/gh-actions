@@ -17,7 +17,7 @@ Reusable GitHub workflows and actions. Pin them to the major tag, such as `@v2`.
       secrets: { SONAR_TOKEN: "${{ secrets.SONAR_TOKEN }}" }
   ```
 
-- [Release image](/.github/workflows/release-image.yml) builds a repo's images, pushes them to `dr.kk-forge.com` under the next SemVer, and publishes one GitHub Release whose body lists `dr.kk-forge.com/<name>@sha256:<digest>` for each image. `images` holds one `<name> <context> <Dockerfile>` per line. The older `image`, `context` and `dockerfile` inputs build one image. A private repo builds on the self-hosted runner with its own `buildkitd`, a public one on a hosted runner. A public repo never runs on the self-hosted runner, because a pull request from a fork would run someone else's code on the kk-forge server. A repo calls it as a second job of its CI caller, after `ci`, on its default branch only. The caller passes the repo's `DOCKER_REGISTRY_PASSWORD`:
+- [Release image](/.github/workflows/release-image.yml) builds a package's images, pushes them to `dr.kk-forge.com` under the package's version, and publishes one GitHub Release whose body lists `dr.kk-forge.com/<name>@sha256:<digest>` for each image. The version is what the caller's `version-task` prints, `X.Y.Z`. That task reads it from the package's version file, where a person raises it. It runs in a job of its own with a read-only token, and the job that builds and publishes runs none of the caller's tools. The tag is `<tag-prefix>v<version>`, with `tag-prefix` such as `backend-` in a repo of several packages. When the tag already points at this commit, the run ends green with no release. When it points at another commit, the run also ends green with no release, and warns that the version needs a raise. `images` holds one `<name> <context> <Dockerfile>` per line. A private repo builds on the self-hosted runner with its own `buildkitd`, a public one on a hosted runner. A public repo never runs on the self-hosted runner, because a pull request from a fork would run someone else's code on the kk-forge server. A repo calls it as a second job of its CI caller, after `ci`, on its default branch only. The caller passes the repo's `DOCKER_REGISTRY_PASSWORD`:
   ```yaml
     release:
       needs: ci
@@ -25,6 +25,7 @@ Reusable GitHub workflows and actions. Pin them to the major tag, such as `@v2`.
       uses: kk-forge-engineering/gh-actions/.github/workflows/release-image.yml@v2
       permissions: { contents: write }
       with:
+        version-task: version
         images: |
           my-service . Dockerfile
       secrets: { DOCKER_REGISTRY_PASSWORD: "${{ secrets.DOCKER_REGISTRY_PASSWORD }}" }

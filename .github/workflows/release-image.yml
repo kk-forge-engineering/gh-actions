@@ -1,7 +1,8 @@
-# Builds a repo's images, pushes each to dr.kk-forge.com under one version, and publishes a GitHub Release
-# `v<version>` whose body lists each image as dr.kk-forge.com/<name>@sha256:<digest>. project-orchestration's
-# `mise run deploy:<stack>` takes those references. A stable X.Y.Z comes from the default branch only, and also
-# moves `latest`. A dev X.Y.Z-dev.N comes from any branch.
+# Builds a package's images, pushes each to dr.kk-forge.com under the package's version, and publishes a GitHub Release
+# `<tag-prefix>v<version>` whose body lists each image as dr.kk-forge.com/<name>@sha256:<digest>.
+# project-orchestration's `mise run deploy:<stack>` takes those references. The version is what the caller's
+# `version-task` prints, and a person raises it in the package. A stable X.Y.Z comes from the default branch only,
+# and also moves `latest`. A dev X.Y.Z-dev.N comes from any branch.
 name: Release image
 
 on:
@@ -10,58 +11,63 @@ on:
       images:
         description: One image per line, `<name> <context> <Dockerfile>`, such as `my-service . Dockerfile`; <name> is its repository in dr.kk-forge.com
         type: string
-        default: ""
-      image:
-        description: A single image's repository in dr.kk-forge.com, built from `context` and `dockerfile`; give it or `images`
+        required: true
+      version-task:
+        description: The caller's mise task that prints the package's version, X.Y.Z, such as `version` or `backend:version`
+        type: string
+        required: true
+      tag-prefix:
+        description: Goes before `v<version>` in the tag, such as `backend-` in a repo of several packages
         type: string
         default: ""
-      bump:
-        description: patch, minor or major, applied to the highest stable version tag
-        type: string
-        default: patch
       dev:
         description: Release X.Y.Z-dev.N from the current branch, instead of X.Y.Z from the default branch
         type: boolean
         default: false
-      context:
-        description: The build context of `image`
-        type: string
-        default: .
-      dockerfile:
-        description: The Dockerfile of `image`, relative to the repo root
-        type: string
-        default: Dockerfile
     secrets:
       DOCKER_REGISTRY_PASSWORD:
         description: The password of the registry user named after the calling repo
         required: true
 
 jobs:
-  release:
+  # The caller's tools run here, apart from the release job: this job holds only a read token, no registry password,
+  # and no step after it runs a binary the caller's mise.toml brought.
+  version:
     # A public repo never runs on the kk-forge runner, as in ci.yml: a pull request from a fork would run someone
-    # else's code on the kk-forge server. So a public repo builds on a hosted runner.
+    # else's code on the kk-forge server. So a public repo runs on a hosted runner.
     runs-on: ${{ github.event.repository.private && fromJSON('["self-hosted","swarm"]') || 'ubuntu-24.04' }}
-    # Two releases at once would pick the same version and both push its tag.
-    concurrency:
-      group: release-${{ github.repository }}
-      cancel-in-progress: false
     permissions:
-      contents: write
+      contents: read
+    outputs:
+      release: ${{ steps.version.outputs.release }}
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
     env:
       IS_DEV: ${{ inputs.dev }}
     steps:
       - uses: actions/checkout@v7
         with:
-          # The version comes from the tags.
+          # The tags show whether this version is released already.
           fetch-depth: 0
-          # No step runs git with credentials: the Release API creates the tag. So the write token stays out of
-          # .git/config, out of reach of the third-party action below.
           persist-credentials: false
+
+      # Node 26's binary links libatomic, which the self-hosted runner's image lacks, so mise fails to install it.
+      - name: Install libatomic1
+        if: runner.os == 'Linux'
+        run: ldconfig -p | grep -q libatomic.so.1 || { sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends libatomic1; }
+
+      # The version task runs with the caller's tools, such as node to read a package.json. They install fresh, not
+      # from the gha cache, which any workflow of the repo can write.
+      - name: Install the tools from mise.toml
+        uses: jdx/mise-action@v5
+        with:
+          cache: false
 
       - name: Pick the version
         id: version
         env:
-          BUMP: ${{ inputs.bump }}
+          VERSION_TASK: ${{ inputs.version-task }}
+          TAG_PREFIX: ${{ inputs.tag-prefix }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
@@ -69,33 +75,93 @@ jobs:
             echo "::error::A stable release comes from $DEFAULT_BRANCH. Release a dev version from $GITHUB_REF_NAME."
             exit 1
           fi
-          latest=$(git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1 || true)
-          IFS=. read -r major minor patch <<<"${latest#v}"
-          major=${major:-0} minor=${minor:-0} patch=${patch:-0}
-          case "$BUMP" in
-            major) version="$((major + 1)).0.0" ;;
-            minor) version="$major.$((minor + 1)).0" ;;
-            patch) version="$major.$minor.$((patch + 1))" ;;
-            *) echo "::error::bump is patch, minor or major, not $BUMP"; exit 1 ;;
-          esac
+          if ! [[ "$VERSION_TASK" =~ ^[A-Za-z0-9][A-Za-z0-9:._-]*$ && "$TAG_PREFIX" =~ ^([a-z0-9][a-z0-9._-]*)?$ ]]; then
+            echo "::error::version-task is a mise task name and tag-prefix is empty or such as backend-"
+            exit 1
+          fi
+          version=$(mise run --quiet "$VERSION_TASK")
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::mise run $VERSION_TASK printed «${version}», not one X.Y.Z line"
+            exit 1
+          fi
           if [ "$IS_DEV" = true ]; then
             version="$version-dev.$GITHUB_RUN_NUMBER"
           fi
-          if git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
-            echo "::error::v$version is already released"
+          tag="${TAG_PREFIX}v$version"
+          echo "tag=$tag" >>"$GITHUB_OUTPUT"
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+          # A tag is never moved, so a deploy of a version always gets the same image. A merge that keeps the version
+          # releases nothing, and the job stays green: the warning asks for a raise only when the code changed.
+          if tagged=$(git rev-parse -q --verify "refs/tags/$tag^{commit}"); then
+            if [ "$tagged" = "$GITHUB_SHA" ]; then
+              echo "$tag is already released from this commit"
+            else
+              echo "::warning::$tag is already released from ${tagged:0:7}, so this commit releases nothing. Raise the version that mise run $VERSION_TASK prints."
+            fi
+            echo "release=false" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "Releasing $tag"
+          echo "release=true" >>"$GITHUB_OUTPUT"
+
+  release:
+    needs: version
+    if: ${{ needs.version.outputs.release == 'true' }}
+    runs-on: ${{ github.event.repository.private && fromJSON('["self-hosted","swarm"]') || 'ubuntu-24.04' }}
+    # Releases build one at a time, so a run that waited finds the tag the run before it created.
+    concurrency:
+      group: release-${{ github.repository }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    env:
+      IS_DEV: ${{ inputs.dev }}
+      TAG: ${{ needs.version.outputs.tag }}
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          # No step runs git with credentials: the Release API creates the tag. So the write token stays out of
+          # .git/config, out of reach of the third-party action below.
+          persist-credentials: false
+
+      # The version crosses from the other job, and a run that waited for the concurrency group may find its tag
+      # released by the one before it.
+      - name: Check the version is still free
+        id: free
+        env:
+          TAG_PREFIX: ${{ inputs.tag-prefix }}
+          VERSION_TASK: ${{ inputs.version-task }}
+        run: |
+          set -euo pipefail
+          # The caller's task could write any outputs, so the version and the tag are bound to each other and to dev.
+          suffix=''
+          [ "$IS_DEV" != true ] || suffix='-dev\.[0-9]+'
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+${suffix}$ && "$TAG" == "${TAG_PREFIX}v$VERSION" ]]; then
+            echo "::error::The version job passed «${VERSION}» and «${TAG}»"
             exit 1
           fi
-          echo "Releasing $version after ${latest:-no stable release}"
-          echo "version=$version" >>"$GITHUB_OUTPUT"
+          if tagged=$(git rev-parse -q --verify "refs/tags/$TAG^{commit}"); then
+            if [ "$tagged" = "$GITHUB_SHA" ]; then
+              echo "$TAG was released from this commit while this run waited"
+            else
+              echo "::warning::$TAG was released from ${tagged:0:7} while this run waited, so this commit releases nothing. Raise the version that mise run $VERSION_TASK prints."
+            fi
+            echo "release=false" >>"$GITHUB_OUTPUT"
+          else
+            echo "release=true" >>"$GITHUB_OUTPUT"
+          fi
 
       # The gha cache needs the job's cache token, which GitHub hands only to actions, not to run steps. It runs
       # before the registry login, so the registry password is not on disk yet.
       - name: Expose the cache token to buildx
-        if: ${{ !github.event.repository.private && inputs.dev }}
+        if: ${{ steps.free.outputs.release == 'true' && !github.event.repository.private && inputs.dev }}
         uses: crazy-max/ghaction-github-runtime@v3
 
       # Each repo has a registry user of its own name, so one repo's password can be rotated or revoked alone.
       - name: Log in to dr.kk-forge.com
+        if: ${{ steps.free.outputs.release == 'true' }}
         env:
           DOCKER_REGISTRY_USER: ${{ github.event.repository.name }}
           DOCKER_REGISTRY_PASSWORD: ${{ secrets.DOCKER_REGISTRY_PASSWORD }}
@@ -103,20 +169,12 @@ jobs:
 
       - name: Build and push
         id: build
+        if: ${{ steps.free.outputs.release == 'true' }}
         env:
-          VERSION: ${{ steps.version.outputs.version }}
           IMAGES: ${{ inputs.images }}
-          IMAGE: ${{ inputs.image }}
-          CONTEXT: ${{ inputs.context }}
-          DOCKERFILE: ${{ inputs.dockerfile }}
           IS_PRIVATE: ${{ github.event.repository.private }}
         run: |
           set -euo pipefail
-          if { [ -n "$IMAGES" ] && [ -n "$IMAGE" ]; } || { [ -z "$IMAGES" ] && [ -z "$IMAGE" ]; }; then
-            echo "::error::Give images or image, one of the two"
-            exit 1
-          fi
-          [ -n "$IMAGES" ] || IMAGES="$IMAGE $CONTEXT $DOCKERFILE"
           names=() contexts=() dockerfiles=()
           while read -r name context dockerfile rest; do
             [ -n "$name" ] || continue
@@ -140,7 +198,7 @@ jobs:
           else
             docker buildx create --name kk-forge --use
           fi
-          # A version is taken only once its git tag exists, which the previous step refuses. A registry tag
+          # A version is taken only once its git tag exists, and then this step does not run. A registry tag
           # <name>:<version> without that git tag is left by a run that failed before its Release, and this build
           # overwrites it. A deploy pins the digest from the Release, so the overwritten image was never deployed.
           refs=()
@@ -179,8 +237,8 @@ jobs:
           echo "refs=${refs[*]}" >>"$GITHUB_OUTPUT"
 
       - name: Publish the release
+        if: ${{ steps.free.outputs.release == 'true' }}
         env:
-          VERSION: ${{ steps.version.outputs.version }}
           REFS: ${{ steps.build.outputs.refs }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
@@ -189,9 +247,9 @@ jobs:
           # reference holds no quote or backslash, so it goes into the JSON as it is, with \n between lines.
           # shellcheck disable=SC2016
           text='```\n'"${REFS// /\\n}"'\n```'
-          body=$(printf '{"tag_name":"v%s","target_commitish":"%s","name":"v%s","body":"%s","prerelease":%s,"make_latest":"%s","generate_release_notes":true}' \
-            "$VERSION" "$GITHUB_SHA" "$VERSION" "$text" "$IS_DEV" "$([ "$IS_DEV" = true ] && echo false || echo true)")
+          body=$(printf '{"tag_name":"%s","target_commitish":"%s","name":"%s","body":"%s","prerelease":%s,"make_latest":"%s","generate_release_notes":true}' \
+            "$TAG" "$GITHUB_SHA" "$TAG" "$text" "$IS_DEV" "$([ "$IS_DEV" = true ] && echo false || echo true)")
           curl --fail-with-body --silent --show-error -X POST \
             -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" \
             "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/releases" -d "$body" >/dev/null
-          echo "Released v$VERSION: $REFS" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "Released $TAG: $REFS" | tee -a "$GITHUB_STEP_SUMMARY"
