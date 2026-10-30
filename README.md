@@ -1,6 +1,6 @@
 # GitHub actions
 
-Reusable GitHub workflows and actions. Pin them to the major tag, such as `@v2`. The tag moves to each compatible release.
+Reusable GitHub workflows and actions. Pin them to the major tag, such as `@v3`. The tag moves to each compatible release. `v3` changed Release image's inputs, and `v2` keeps the earlier ones.
 
 ## Workflows
 
@@ -12,14 +12,33 @@ Reusable GitHub workflows and actions. Pin them to the major tag, such as `@v2`.
       branches: ["**"]
   jobs:
     ci:
-      uses: kk-forge-engineering/gh-actions/.github/workflows/ci.yml@v2
+      uses: kk-forge-engineering/gh-actions/.github/workflows/ci.yml@v3
       permissions: { contents: read, pull-requests: read }
       secrets: { SONAR_TOKEN: "${{ secrets.SONAR_TOKEN }}" }
   ```
-- [Release image](/.github/workflows/release-image.yml) builds a repo's image on the self-hosted runner with its own `buildkitd`, pushes it under the next SemVer and records the digest in a GitHub Release.
-- [Deploy image](/.github/workflows/deploy-image.yml) sends a release's digest over SSH to a forced command on the server, which rolls one Swarm service onto it. The caller passes `secrets: inherit`, so the environment's `DEPLOY_SSH_KEY` reaches the job.
 
-Release image and Deploy image work only with the kk-forge server: its runner, its registry and its forced command.
+- [Release image](/.github/workflows/release-image.yml) builds a package's images, pushes them to `dr.kk-forge.com` under the package's version, and publishes a GitHub Release `<tag-prefix>v<version>`. The Release body lists `dr.kk-forge.com/<name>@sha256:<digest>` for each image. When that tag already exists, the run ends green without a release, and warns when the tag points at another commit. A private repo builds on the self-hosted runner, a public one on a hosted runner. Its inputs:
+  - `images`, required: one `<name> <context> <Dockerfile>` per line, `<name>` being the image's repository in `dr.kk-forge.com`
+  - `version-task`, required: the caller's mise task that prints the version, `X.Y.Z`
+  - `tag-prefix`: goes before `v<version>`, such as `backend-` in a repo of several packages
+  - `dev`: releases `<version>-dev.<run number>` from any branch, where a stable release comes only from the default branch
+  - the secret `DOCKER_REGISTRY_PASSWORD`: the password of the registry user named after the repo
+
+  The caller runs it as a second job of its CI, after `ci`, on the default branch:
+  ```yaml
+    release:
+      needs: ci
+      if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+      uses: kk-forge-engineering/gh-actions/.github/workflows/release-image.yml@v3
+      permissions: { contents: write }
+      with:
+        version-task: version
+        images: |
+          my-service . Dockerfile
+      secrets: { DOCKER_REGISTRY_PASSWORD: "${{ secrets.DOCKER_REGISTRY_PASSWORD }}" }
+  ```
+
+project-orchestration deploys the references a Release lists ([Release and deploy](https://github.com/kk-forge-engineering/project-orchestration/blob/main/docs/release-and-deploy.md)).
 
 ## Actions
 

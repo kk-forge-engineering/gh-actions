@@ -13,7 +13,8 @@ on:
 
 jobs:
   ci:
-    # The kk-forge runner takes only the org's private repos, so a public repo runs on a hosted runner.
+    # A public repo never runs on the kk-forge runner: a pull request from a fork would run someone else's code on
+    # the kk-forge server. So a public repo runs on a hosted runner.
     runs-on: ${{ github.event.repository.private && fromJSON('["self-hosted","swarm"]') || 'ubuntu-24.04' }}
     # A newer push to the same branch makes this run's result moot, and the kk-forge runner takes one job at a time.
     concurrency:
@@ -29,6 +30,11 @@ jobs:
           fetch-depth: 0
           # `setup` runs third-party install scripts, so the token stays out of .git/config.
           persist-credentials: false
+
+      # Node 26's binary links libatomic, which the self-hosted runner's image lacks, so mise fails to install it.
+      - name: Install libatomic1
+        if: runner.os == 'Linux'
+        run: ldconfig -p | grep -q libatomic.so.1 || { sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends libatomic1; }
 
       - name: Install the tools from mise.toml
         uses: jdx/mise-action@v5
