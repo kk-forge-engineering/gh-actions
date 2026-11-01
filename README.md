@@ -1,6 +1,6 @@
 # GitHub actions
 
-Reusable GitHub workflows and actions. Pin them to the major tag, such as `@v3`. The tag moves to each compatible release. `v3` changed Release image's inputs, and `v2` keeps the earlier ones.
+Reusable GitHub workflows and actions. Pin them to the major tag, such as `@v3`. `v2` keeps Release image's earlier inputs.
 
 ## Workflows
 
@@ -22,7 +22,7 @@ Reusable GitHub workflows and actions. Pin them to the major tag, such as `@v3`.
   - `version-task`, required: the caller's mise task that prints the version, `X.Y.Z`
   - `tag-prefix`: goes before `v<version>`, such as `backend-` in a repo of several packages
   - `dev`: releases `<version>-dev.<run number>` from any branch, where a stable release comes only from the default branch
-  - the secret `DOCKER_REGISTRY_TOKEN`: the token of the registry user named after the repo. Today it is that user's password in the registry's htpasswd, and it can write every repository there. Once the registry moves to Zot, it becomes an API key.
+  - the secret `DOCKER_REGISTRY_TOKEN`: the token of the registry user named after the repo
 
   The caller runs it as a second job of its CI, after `ci`, on the default branch:
   ```yaml
