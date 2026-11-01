@@ -165,7 +165,14 @@ jobs:
         env:
           DOCKER_REGISTRY_USER: ${{ github.event.repository.name }}
           DOCKER_REGISTRY_PASSWORD: ${{ secrets.DOCKER_REGISTRY_PASSWORD }}
-        run: printf '%s' "$DOCKER_REGISTRY_PASSWORD" | docker login dr.kk-forge.com --username "$DOCKER_REGISTRY_USER" --password-stdin
+        run: |
+          set -euo pipefail
+          # An empty secret makes docker login ask interactively and fail with a message about a TTY.
+          if [ -z "$DOCKER_REGISTRY_PASSWORD" ]; then
+            echo "::error::No DOCKER_REGISTRY_PASSWORD: this repo needs a registry user named $DOCKER_REGISTRY_USER and that secret"
+            exit 1
+          fi
+          printf '%s' "$DOCKER_REGISTRY_PASSWORD" | docker login dr.kk-forge.com --username "$DOCKER_REGISTRY_USER" --password-stdin
 
       - name: Build and push
         id: build
