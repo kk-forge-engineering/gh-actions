@@ -25,12 +25,12 @@ on:
         type: boolean
         default: false
     secrets:
-      DOCKER_REGISTRY_PASSWORD:
-        description: The password of the registry user named after the calling repo
+      DOCKER_REGISTRY_TOKEN:
+        description: The token the registry user named after the calling repo logs in with
         required: true
 
 jobs:
-  # The caller's tools run here, apart from the release job: this job holds only a read token, no registry password,
+  # The caller's tools run here, apart from the release job: this job holds only a read token, no registry token,
   # and no step after it runs a binary the caller's mise.toml brought.
   version:
     # A public repo never runs on the kk-forge runner, as in ci.yml: a pull request from a fork would run someone
@@ -154,25 +154,25 @@ jobs:
           fi
 
       # The gha cache needs the job's cache token, which GitHub hands only to actions, not to run steps. It runs
-      # before the registry login, so the registry password is not on disk yet.
+      # before the registry login, so the registry token is not on disk yet.
       - name: Expose the cache token to buildx
         if: ${{ steps.free.outputs.release == 'true' && !github.event.repository.private && inputs.dev }}
         uses: crazy-max/ghaction-github-runtime@v3
 
-      # Each repo has a registry user of its own name, so one repo's password can be rotated or revoked alone.
+      # Each repo has a registry user of its own name, so one repo's token can be rotated or revoked alone.
       - name: Log in to dr.kk-forge.com
         if: ${{ steps.free.outputs.release == 'true' }}
         env:
           DOCKER_REGISTRY_USER: ${{ github.event.repository.name }}
-          DOCKER_REGISTRY_PASSWORD: ${{ secrets.DOCKER_REGISTRY_PASSWORD }}
+          DOCKER_REGISTRY_TOKEN: ${{ secrets.DOCKER_REGISTRY_TOKEN }}
         run: |
           set -euo pipefail
           # An empty secret makes docker login ask interactively and fail with a message about a TTY.
-          if [ -z "$DOCKER_REGISTRY_PASSWORD" ]; then
-            echo "::error::No DOCKER_REGISTRY_PASSWORD: this repo needs a registry user named $DOCKER_REGISTRY_USER and that secret"
+          if [ -z "$DOCKER_REGISTRY_TOKEN" ]; then
+            echo "::error::No DOCKER_REGISTRY_TOKEN: this repo needs a registry user named $DOCKER_REGISTRY_USER and that secret"
             exit 1
           fi
-          printf '%s' "$DOCKER_REGISTRY_PASSWORD" | docker login dr.kk-forge.com --username "$DOCKER_REGISTRY_USER" --password-stdin
+          printf '%s' "$DOCKER_REGISTRY_TOKEN" | docker login dr.kk-forge.com --username "$DOCKER_REGISTRY_USER" --password-stdin
 
       - name: Build and push
         id: build

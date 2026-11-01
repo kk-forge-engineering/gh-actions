@@ -22,7 +22,7 @@ Reusable GitHub workflows and actions. Pin them to the major tag, such as `@v3`.
   - `version-task`, required: the caller's mise task that prints the version, `X.Y.Z`
   - `tag-prefix`: goes before `v<version>`, such as `backend-` in a repo of several packages
   - `dev`: releases `<version>-dev.<run number>` from any branch, where a stable release comes only from the default branch
-  - the secret `DOCKER_REGISTRY_PASSWORD`: the password of the registry user named after the repo
+  - the secret `DOCKER_REGISTRY_TOKEN`: the token of the registry user named after the repo. Today it is that user's password in the registry's htpasswd, and it can write every repository there. Once the registry moves to Zot, it becomes an API key.
 
   The caller runs it as a second job of its CI, after `ci`, on the default branch:
   ```yaml
@@ -35,7 +35,7 @@ Reusable GitHub workflows and actions. Pin them to the major tag, such as `@v3`.
         version-task: version
         images: |
           my-service . Dockerfile
-      secrets: { DOCKER_REGISTRY_PASSWORD: "${{ secrets.DOCKER_REGISTRY_PASSWORD }}" }
+      secrets: { DOCKER_REGISTRY_TOKEN: "${{ secrets.DOCKER_REGISTRY_TOKEN }}" }
   ```
 
 project-orchestration deploys the references a Release lists ([Release and deploy](https://github.com/kk-forge-engineering/project-orchestration/blob/main/docs/release-and-deploy.md)).
