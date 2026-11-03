@@ -108,9 +108,10 @@ jobs:
     needs: version
     if: ${{ needs.version.outputs.release == 'true' }}
     runs-on: ${{ github.event.repository.private && fromJSON('["self-hosted","swarm"]') || 'ubuntu-24.04' }}
-    # Releases build one at a time, so a run that waited finds the tag the run before it created.
+    # Releases build one at a time, so a run that waited finds the tag the run before it created. Dev and stable
+    # releases queue apart, since GitHub drops an older pending run for a newer one in the same group.
     concurrency:
-      group: release-${{ github.repository }}
+      group: release-${{ github.repository }}-${{ inputs.dev && 'dev' || 'stable' }}
       cancel-in-progress: false
     permissions:
       contents: write
