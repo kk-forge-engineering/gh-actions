@@ -1,8 +1,8 @@
 # Builds a package's images, pushes each to dr.kk-forge.com under the package's version, and publishes a GitHub Release
-# `<tag-prefix>v<version>` whose body lists each image as dr.kk-forge.com/<name>@sha256:<digest>.
+# `<tag-prefix>v<version>` whose body lists each image as dr.kk-forge.com/<name>:<version>.
 # project-orchestration's `mise run deploy:<stack>` takes those references. The version is what the caller's
-# `version-task` prints, and a person raises it in the package. A stable X.Y.Z comes from the default branch only,
-# and also moves `latest`. A dev X.Y.Z-dev.N comes from any branch.
+# `version-task` prints, and a person raises it in the package. A stable X.Y.Z comes from the default branch only. A
+# dev X.Y.Z-dev.N comes from any branch.
 name: Release image
 
 on:
@@ -205,29 +205,32 @@ jobs:
           else
             docker buildx create --name kk-forge --use
           fi
-          # A version is taken only once its git tag exists, and then this step does not run. A registry tag
-          # <name>:<version> without that git tag is left by a run that failed before its Release, and this build
-          # overwrites it. A deploy pins the digest from the Release, so the overwritten image was never deployed.
+          # The registry keeps every tag immutable, so a version that is already there, even from a run that failed
+          # before its Release, cannot be pushed again. Every image is checked before any is built.
+          for name in "${names[@]}"; do
+            ref=dr.kk-forge.com/$name:$VERSION
+            if found=$(docker buildx imagetools inspect "$ref" 2>&1); then
+              echo "::error::$ref is already in the registry. Raise the version that the version task prints."
+              exit 1
+            elif ! grep -qi 'not found' <<<"$found"; then
+              echo "::error::Could not check $ref in the registry: $found"
+              exit 1
+            fi
+          done
           refs=()
           for i in "${!names[@]}"; do
-            repository=dr.kk-forge.com/${names[$i]}
-            tags=(--tag "$repository:$VERSION")
-            # The cache never lives in the registry: every repo's CI user can write every repository there, so one
-            # repo's CI could poison another's build. A stable release builds with no shared cache either: any
-            # workflow of this repo can write its gha cache, ci.yml's third-party install scripts included. The
-            # kk-forge runner's buildkitd starts empty for each job. Only a dev release on a hosted runner uses the
-            # gha cache, so a poisoned layer can reach only a dev image.
+            ref=dr.kk-forge.com/${names[$i]}:$VERSION
+            # A stable release builds with no cache another job could have written: any workflow of this repo can
+            # write its gha cache, ci.yml's third-party install scripts included. The kk-forge runner's buildkitd
+            # starts empty for each job. Only a dev release on a hosted runner uses the gha cache, so a poisoned layer
+            # can reach only a dev image.
             cache=()
             if [ "$IS_PRIVATE" != true ] && [ "$IS_DEV" = true ]; then
               cache=(--cache-from "type=gha,scope=dev/${names[$i]}" --cache-to "type=gha,scope=dev/${names[$i]},mode=max")
             fi
-            if [ "$IS_DEV" != true ]; then
-              # latest moves to each stable release, for a pull by hand.
-              tags+=(--tag "$repository:latest")
-            fi
             # --provenance=false pushes a plain manifest, so the digest is the image itself.
             docker buildx build "${contexts[$i]}" --file "${dockerfiles[$i]}" --platform linux/amd64 --push --provenance=false \
-              "${tags[@]}" \
+              --tag "$ref" \
               --label "org.opencontainers.image.version=$VERSION" \
               --label "org.opencontainers.image.revision=$GITHUB_SHA" \
               --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
@@ -238,8 +241,8 @@ jobs:
               echo "::error::The build of ${names[$i]} reported no image digest"
               exit 1
             fi
-            echo "Pushed $repository:$VERSION as $digest"
-            refs+=("$repository@$digest")
+            echo "Pushed $ref as $digest"
+            refs+=("$ref")
           done
           echo "refs=${refs[*]}" >>"$GITHUB_OUTPUT"
 

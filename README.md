@@ -17,11 +17,11 @@ Reusable GitHub workflows and actions. Pin them to the major tag, such as `@v3`.
       secrets: { SONAR_TOKEN: "${{ secrets.SONAR_TOKEN }}" }
   ```
 
-- [Release image](/.github/workflows/release-image.yml) builds a package's images, pushes them to `dr.kk-forge.com` under the package's version, and publishes a GitHub Release `<tag-prefix>v<version>`. The Release body lists `dr.kk-forge.com/<name>@sha256:<digest>` for each image. When that tag already exists, the run ends green without a release, and warns when the tag points at another commit. A private repo builds on the self-hosted runner, a public one on a hosted runner. Its inputs:
+- [Release image](/.github/workflows/release-image.yml) builds a package's images, pushes them to `dr.kk-forge.com` under the package's version, and publishes a GitHub Release `<tag-prefix>v<version>`. The Release body lists `dr.kk-forge.com/<name>:<version>` for each image. When the git tag already exists, the run ends green without a release, and warns when the tag points at another commit. When an image's version tag is already in the registry, the run fails, since the registry never overwrites a tag. A private repo builds on the self-hosted runner, a public one on a hosted runner. Its inputs:
   - `images`, required: one `<name> <context> <Dockerfile>` per line, `<name>` being the image's repository in `dr.kk-forge.com`
   - `version-task`, required: the caller's mise task that prints the version, `X.Y.Z`
   - `tag-prefix`: goes before `v<version>`, such as `backend-` in a repo of several packages
-  - `dev`: releases `<version>-dev.<run number>` from any branch, where a stable release comes only from the default branch
+  - `dev`: releases `<version>-dev.<run number>` from any branch, where a stable release comes only from the default branch. A trial on the server is such a dev release, from a caller job that runs on `workflow_dispatch` with `dev: true`.
   - the secret `DOCKER_REGISTRY_TOKEN`: the token of the registry user named after the repo
 
   The caller runs it as a second job of its CI, after `ci`, on the default branch:
