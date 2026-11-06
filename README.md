@@ -22,6 +22,7 @@ Reusable GitHub workflows and actions. Pin them to the major tag, such as `@v3`.
   - `version-task`, required: the caller's mise task that prints the version, `X.Y.Z`
   - `tag-prefix`: goes before `v<version>`, such as `backend-` in a repo of several packages
   - `dev`: releases `<version>-dev.<run number>` from any branch, where a stable release comes only from the default branch. A trial on the server is such a dev release, from a caller job that runs on `workflow_dispatch` with `dev: true`.
+  - `hosted`: builds on a GitHub-hosted runner even for a private repo. project-orchestration sets it for the runner launcher, which the self-hosted runners must not build: they exist only while it runs, and a job that breaks out of its container there could tamper with it. Such a release builds without a cache and spends the repo's hosted minutes.
   - the secret `DOCKER_REGISTRY_TOKEN`: the token of the registry user named after the repo
 
   The caller runs it as a second job of its CI, after `ci`, on the default branch:

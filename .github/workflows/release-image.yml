@@ -21,6 +21,10 @@ on:
         description: Release X.Y.Z-dev.N from the current branch, instead of X.Y.Z from the default branch
         type: boolean
         default: false
+      hosted:
+        description: Build on a GitHub-hosted runner even for a private repo, for an image the self-hosted runners must not build, such as the one that starts them
+        type: boolean
+        default: false
     secrets:
       DOCKER_REGISTRY_TOKEN:
         description: The token the registry user named after the calling repo logs in with
@@ -29,8 +33,8 @@ on:
 jobs:
   # The caller's tools run only in this job, which holds no registry token and no write token.
   version:
-    # A public repo runs on a hosted runner, as in ci.yml (AGENTS.md).
-    runs-on: ${{ github.event.repository.private && fromJSON('["self-hosted","swarm"]') || 'ubuntu-24.04' }}
+    # A public repo runs on a hosted runner, as in ci.yml (AGENTS.md), and so does a caller that asks for one.
+    runs-on: ${{ github.event.repository.private && !inputs.hosted && fromJSON('["self-hosted","swarm"]') || 'ubuntu-24.04' }}
     permissions:
       contents: read
     outputs:
@@ -99,7 +103,7 @@ jobs:
   release:
     needs: version
     if: ${{ needs.version.outputs.release == 'true' }}
-    runs-on: ${{ github.event.repository.private && fromJSON('["self-hosted","swarm"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ github.event.repository.private && !inputs.hosted && fromJSON('["self-hosted","swarm"]') || 'ubuntu-24.04' }}
     # One release at a time per kind: GitHub drops an older pending run for a newer one in the same group.
     concurrency:
       group: release-${{ github.repository }}-${{ inputs.dev && 'dev' || 'stable' }}
@@ -168,6 +172,7 @@ jobs:
         env:
           IMAGES: ${{ inputs.images }}
           IS_PRIVATE: ${{ github.event.repository.private }}
+          ON_KK_FORGE: ${{ github.event.repository.private && !inputs.hosted }}
         run: |
           set -euo pipefail
           names=() contexts=() dockerfiles=()
@@ -183,7 +188,7 @@ jobs:
             names+=("$name") contexts+=("$context") dockerfiles+=("$dockerfile")
           done <<<"$IMAGES"
           [ "${#names[@]}" -gt 0 ] || { echo "::error::images lists no image"; exit 1; }
-          if [ "$IS_PRIVATE" = true ]; then
+          if [ "$ON_KK_FORGE" = true ]; then
             # The launcher gives each kk-forge runner its own buildkitd at BUILDKIT_HOST.
             if [ -z "${BUILDKIT_HOST:-}" ]; then
               echo "::error::No BUILDKIT_HOST: a private repo builds only on the kk-forge runner"
