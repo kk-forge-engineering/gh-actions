@@ -1,8 +1,5 @@
-# Builds a package's images, pushes each to dr.kk-forge.com under the package's version, and publishes a GitHub Release
-# `<tag-prefix>v<version>` whose body lists each image as dr.kk-forge.com/<name>:<version>.
-# project-orchestration's `mise run deploy:<stack>` takes those references. The version is what the caller's
-# `version-task` prints, and a person raises it in the package. A stable X.Y.Z comes from the default branch only. A
-# dev X.Y.Z-dev.N comes from any branch.
+# Builds a package's images under the version its `version-task` prints, pushes them to dr.kk-forge.com and publishes
+# a GitHub Release listing them. Called as a job of the caller's CI (README.md).
 name: Release image
 
 on:
@@ -30,11 +27,9 @@ on:
         required: true
 
 jobs:
-  # The caller's tools run here, apart from the release job: this job holds only a read token, no registry token,
-  # and no step after it runs a binary the caller's mise.toml brought.
+  # The caller's tools run only in this job, which holds no registry token and no write token.
   version:
-    # A public repo never runs on the kk-forge runner, as in ci.yml: a pull request from a fork would run someone
-    # else's code on the kk-forge server. So a public repo runs on a hosted runner.
+    # A public repo runs on a hosted runner, as in ci.yml (AGENTS.md).
     runs-on: ${{ github.event.repository.private && fromJSON('["self-hosted","swarm"]') || 'ubuntu-24.04' }}
     permissions:
       contents: read
@@ -47,7 +42,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          # The tags show whether this version is released already.
           fetch-depth: 0
           persist-credentials: false
 
@@ -56,8 +50,7 @@ jobs:
         if: runner.os == 'Linux'
         run: ldconfig -p | grep -q libatomic.so.1 || { sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends libatomic1; }
 
-      # The version task runs with the caller's tools, such as node to read a package.json. They install fresh, not
-      # from the gha cache, which any workflow of the repo can write.
+      # Not from the gha cache, which any workflow of the repo can write.
       - name: Install the tools from mise.toml
         uses: jdx/mise-action@v5
         with:
@@ -90,8 +83,7 @@ jobs:
           tag="${TAG_PREFIX}v$version"
           echo "tag=$tag" >>"$GITHUB_OUTPUT"
           echo "version=$version" >>"$GITHUB_OUTPUT"
-          # A tag is never moved, so a deploy of a version always gets the same image. A merge that keeps the version
-          # releases nothing, and the job stays green: the warning asks for a raise only when the code changed.
+          # A tag never moves. A merge that keeps the version releases nothing and stays green.
           if tagged=$(git rev-parse -q --verify "refs/tags/$tag^{commit}"); then
             if [ "$tagged" = "$GITHUB_SHA" ]; then
               echo "$tag is already released from this commit"
@@ -108,8 +100,7 @@ jobs:
     needs: version
     if: ${{ needs.version.outputs.release == 'true' }}
     runs-on: ${{ github.event.repository.private && fromJSON('["self-hosted","swarm"]') || 'ubuntu-24.04' }}
-    # Releases build one at a time, so a run that waited finds the tag the run before it created. Dev and stable
-    # releases queue apart, since GitHub drops an older pending run for a newer one in the same group.
+    # One release at a time per kind: GitHub drops an older pending run for a newer one in the same group.
     concurrency:
       group: release-${{ github.repository }}-${{ inputs.dev && 'dev' || 'stable' }}
       cancel-in-progress: false
@@ -123,12 +114,10 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          # No step runs git with credentials: the Release API creates the tag. So the write token stays out of
-          # .git/config, out of reach of the third-party action below.
+          # The Release API creates the tag, so the write token stays out of .git/config.
           persist-credentials: false
 
-      # The version crosses from the other job, and a run that waited for the concurrency group may find its tag
-      # released by the one before it.
+      # A run that waited for the group may find its tag released by the run before it.
       - name: Check the version is still free
         id: free
         env:
@@ -136,7 +125,7 @@ jobs:
           VERSION_TASK: ${{ inputs.version-task }}
         run: |
           set -euo pipefail
-          # The caller's task could write any outputs, so the version and the tag are bound to each other and to dev.
+          # The caller's task could have written any outputs.
           suffix=''
           [ "$IS_DEV" != true ] || suffix="-dev\\.$GITHUB_RUN_NUMBER"
           if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+${suffix}$ && "$TAG" == "${TAG_PREFIX}v$VERSION" ]]; then
@@ -154,13 +143,11 @@ jobs:
             echo "release=true" >>"$GITHUB_OUTPUT"
           fi
 
-      # The gha cache needs the job's cache token, which GitHub hands only to actions, not to run steps. It runs
-      # before the registry login, so the registry token is not on disk yet.
+      # GitHub hands the cache token only to actions. This runs before the registry token is on disk.
       - name: Expose the cache token to buildx
         if: ${{ steps.free.outputs.release == 'true' && !github.event.repository.private && inputs.dev }}
         uses: crazy-max/ghaction-github-runtime@v3
 
-      # Each repo has a registry user of its own name, so one repo's token can be rotated or revoked alone.
       - name: Log in to dr.kk-forge.com
         if: ${{ steps.free.outputs.release == 'true' }}
         env:
@@ -206,8 +193,7 @@ jobs:
           else
             docker buildx create --name kk-forge --use
           fi
-          # The registry keeps every tag immutable, so a version that is already there, even from a run that failed
-          # before its Release, cannot be pushed again. Every image is checked before any is built.
+          # The registry never overwrites a tag, so a version already there, even from a failed run, needs a raise.
           for name in "${names[@]}"; do
             ref=dr.kk-forge.com/$name:$VERSION
             if found=$(docker buildx imagetools inspect "$ref" 2>&1); then
@@ -221,10 +207,7 @@ jobs:
           refs=()
           for i in "${!names[@]}"; do
             ref=dr.kk-forge.com/${names[$i]}:$VERSION
-            # A stable release builds with no cache another job could have written: any workflow of this repo can
-            # write its gha cache, ci.yml's third-party install scripts included. The kk-forge runner's buildkitd
-            # starts empty for each job. Only a dev release on a hosted runner uses the gha cache, so a poisoned layer
-            # can reach only a dev image.
+            # Any workflow of the repo can write the gha cache, so only a dev build reads it.
             cache=()
             if [ "$IS_PRIVATE" != true ] && [ "$IS_DEV" = true ]; then
               cache=(--cache-from "type=gha,scope=dev/${names[$i]}" --cache-to "type=gha,scope=dev/${names[$i]},mode=max")
@@ -254,8 +237,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # The body lists one reference per line in a code block, ready to pass to `mise run deploy:<stack> --`. A
-          # reference holds no quote or backslash, so it goes into the JSON as it is, with \n between lines.
+          # A reference holds no quote or backslash, so it goes into the JSON as it is.
           # shellcheck disable=SC2016
           text='```\n'"${REFS// /\\n}"'\n```'
           body=$(printf '{"tag_name":"%s","target_commitish":"%s","name":"%s","body":"%s","prerelease":%s,"make_latest":"%s","generate_release_notes":true}' \
