@@ -4,7 +4,7 @@ Reusable GitHub workflows and actions. Pin them to the major tag, such as `@v3`.
 
 ## Workflows
 
-- [CI](/.github/workflows/ci.yml) installs a repo's tools from `mise.toml`, runs `mise run setup` and `mise run check:ci`, then [SonarQube scan](/sonarqube-scan) when the repo has a `sonar-project.properties`, even after a red `check:ci`. Such a repo's `check:ci` writes the coverage reports Sonar reads, and its caller passes `SONAR_TOKEN`. A private repo runs on the self-hosted runner, a public one on a hosted runner. The workflow reads the visibility from the event's repository, so call it from `push`, `pull_request` or `workflow_dispatch`. The caller:
+- [CI](/.github/workflows/ci.yml) installs a repo's tools from `mise.toml`, runs `mise run setup` and `mise run check:ci`, then [SonarQube scan](/sonarqube-scan) when the repo has a `sonar-project.properties`, even after a red `check:ci`. Such a repo's `check:ci` writes the coverage reports Sonar reads, and its caller passes `SONAR_TOKEN`. A private repo runs on the self-hosted runner unless its caller passes `hosted: true`, a public one on a hosted runner. The workflow reads the visibility from the event's repository, so call it from `push`, `pull_request` or `workflow_dispatch`. The caller:
   ```yaml
   name: CI
   on:
@@ -17,11 +17,9 @@ Reusable GitHub workflows and actions. Pin them to the major tag, such as `@v3`.
       secrets: { SONAR_TOKEN: "${{ secrets.SONAR_TOKEN }}" }
   ```
 
-- [Release image](/.github/workflows/release-image.yml) builds a package's images, pushes them to `dr.kk-forge.com` under the package's version, and publishes a GitHub Release `<tag-prefix>v<version>`. The Release body lists `dr.kk-forge.com/<name>@sha256:<digest>` for each image. When that tag already exists, the run ends green without a release, and warns when the tag points at another commit. A private repo builds on the self-hosted runner, a public one on a hosted runner. Its inputs:
-  - `images`, required: one `<name> <context> <Dockerfile>` per line, `<name>` being the image's repository in `dr.kk-forge.com`
-  - `version-task`, required: the caller's mise task that prints the version, `X.Y.Z`
-  - `tag-prefix`: goes before `v<version>`, such as `backend-` in a repo of several packages
-  - `dev`: releases `<version>-dev.<run number>` from any branch, where a stable release comes only from the default branch
+- [Release image](/.github/workflows/release-image.yml) builds a package's images, pushes them to `dr.kk-forge.com` under the package's version, and publishes a GitHub Release `<tag-prefix>v<version>`. The Release body lists `dr.kk-forge.com/<name>:<version>` for each image. When the git tag already exists, the run ends green without a release, and warns when the tag points at another commit. When an image's version tag is already in the registry, the run fails, since the registry never overwrites a tag. A private repo builds on the self-hosted runner unless its caller passes `hosted: true`, a public one on a hosted runner. Each input's meaning is in the workflow's `inputs`. What the inputs leave out:
+  - A trial on the server is a dev release, from a caller job that runs on `workflow_dispatch` with `dev: true`.
+  - `hosted` is meant for project-orchestration's runner launcher. The self-hosted runners exist only while the launcher runs, so they cannot build it after it fails. A job that breaks out of its container there could also tamper with it. A caller that passes `hosted` to Release image passes it to CI as well. Its CI then runs while the runners are down. A private repo's hosted run builds without a cache and spends the repo's hosted minutes.
   - the secret `DOCKER_REGISTRY_TOKEN`: the token of the registry user named after the repo
 
   The caller runs it as a second job of its CI, after `ci`, on the default branch:

@@ -1,10 +1,14 @@
-# Runs a repo's checks and, when the repo has a sonar-project.properties, its SonarQube analysis. The repo
-# keeps its tools in mise.toml and the tasks `setup` and `check:ci` there. A caller with a
-# sonar-project.properties passes the secret SONAR_TOKEN. This repo runs the same workflow on its own pushes.
+# Runs a repo's `mise run setup` and `check:ci`, then its SonarQube scan when it has a sonar-project.properties.
+# Called from each repo's CI (README.md), and run on this repo's own pushes.
 name: CI
 
 on:
   workflow_call:
+    inputs:
+      hosted:
+        description: Run on a GitHub-hosted runner even for a private repo, as release-image.yml's `hosted` does, so the caller's CI runs while the self-hosted runners are down
+        type: boolean
+        default: false
     secrets:
       SONAR_TOKEN:
         required: false
@@ -13,12 +17,12 @@ on:
 
 jobs:
   ci:
-    # A public repo never runs on the kk-forge runner: a pull request from a fork would run someone else's code on
-    # the kk-forge server. So a public repo runs on a hosted runner.
-    runs-on: ${{ github.event.repository.private && fromJSON('["self-hosted","swarm"]') || 'ubuntu-24.04' }}
-    # A newer push to the same branch makes this run's result moot, and the kk-forge runner takes one job at a time.
+    # A public repo, or a caller that sets `hosted`, runs on a GitHub-hosted runner. A pull request from a fork must
+    # never run code on the kk-forge server.
+    runs-on: ${{ github.event.repository.private && !inputs.hosted && fromJSON('["self-hosted","swarm"]') || 'ubuntu-24.04' }}
+    # A newer push makes this run moot. The event keeps a manual dev run and a push from cancelling each other.
     concurrency:
-      group: ci-${{ github.workflow }}-${{ github.ref }}
+      group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
       cancel-in-progress: true
     permissions:
       contents: read
