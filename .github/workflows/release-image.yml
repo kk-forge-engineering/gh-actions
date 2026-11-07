@@ -116,6 +116,9 @@ jobs:
       IS_DEV: ${{ inputs.dev }}
       TAG: ${{ needs.version.outputs.tag }}
       VERSION: ${{ needs.version.outputs.version }}
+      # Any workflow of the repo can write the gha cache, so only a public repo's dev build reads it. A private repo's
+      # build is either on the kk-forge runner or the runner launcher on a hosted runner, and neither takes such layers.
+      SHOULD_USE_GHA_CACHE: ${{ !github.event.repository.private && inputs.dev }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -150,10 +153,10 @@ jobs:
             echo "release=true" >>"$GITHUB_OUTPUT"
           fi
 
-      # GitHub hands the cache token only to actions. This step runs before the login, so the action cannot read the
-      # registry token.
+      # GitHub hands the cache token only to actions. This step runs before the login, so the registry token is not on
+      # disk while it runs.
       - name: Expose the cache token to buildx
-        if: ${{ steps.free.outputs.release == 'true' && !github.event.repository.private && inputs.dev }}
+        if: ${{ steps.free.outputs.release == 'true' && env.SHOULD_USE_GHA_CACHE == 'true' }}
         uses: crazy-max/ghaction-github-runtime@v3
 
       - name: Log in to dr.kk-forge.com
@@ -176,8 +179,6 @@ jobs:
         env:
           IMAGES: ${{ inputs.images }}
           IS_ON_KK_FORGE: ${{ github.event.repository.private && !inputs.hosted }}
-          # Any workflow of the repo can write the gha cache, so only a public repo's dev build reads it.
-          SHOULD_USE_GHA_CACHE: ${{ !github.event.repository.private && inputs.dev }}
         run: |
           set -euo pipefail
           names=() contexts=() dockerfiles=()
@@ -201,19 +202,17 @@ jobs:
             fi
             docker buildx create --name kk-forge --driver remote "$BUILDKIT_HOST" --use
           else
-            # The driver is named, so a BUILDKIT_HOST in the runner's environment cannot turn this into a remote builder.
+            # This step names the driver, so buildx ignores a BUILDKIT_HOST in the runner's environment.
             docker buildx create --name kk-forge --driver docker-container --use
           fi
-          # The registry never overwrites a tag, so a version already there, even from a failed run, needs a raise.
+          # The registry never overwrites a tag, so a version already there, even from a failed run, fails the run, and the
+          # message names the fix. A rerun keeps the run number, so a dev run needs a new run rather than a raise.
+          fix="Raise the version that the version task prints."
+          [ "$IS_DEV" != true ] || fix="Start a new run, which takes the next run number."
           for name in "${names[@]}"; do
             ref=dr.kk-forge.com/$name:$VERSION
             if found=$(docker buildx imagetools inspect "$ref" 2>&1); then
-              # A rerun keeps the run number, so a dev run that pushed before it failed needs a new run.
-              if [ "$IS_DEV" = true ]; then
-                echo "::error::$ref is already in the registry. Start a new run, which takes the next run number."
-              else
-                echo "::error::$ref is already in the registry. Raise the version that the version task prints."
-              fi
+              echo "::error::$ref is already in the registry. $fix"
               exit 1
             elif ! grep -qi 'not found' <<<"$found"; then
               echo "::error::Could not check $ref in the registry: $found"
