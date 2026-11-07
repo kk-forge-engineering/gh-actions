@@ -23,6 +23,9 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+    # The SonarQube steps send SONAR_TOKEN to this host alone.
+    env:
+      SONAR_HOST_URL: https://sq.kk-forge.com
     steps:
       - uses: actions/checkout@v7
         with:
@@ -65,10 +68,11 @@ jobs:
         uses: kk-forge-engineering/gh-actions/sonarqube-scan@v2
         with:
           sonar-token: ${{ secrets.SONAR_TOKEN }}
-          sonar-host-url: https://sq.kk-forge.com
+          sonar-host-url: ${{ env.SONAR_HOST_URL }}
 
       # The quality gate action says only that the gate failed. This step names each failed condition, read with the
-      # repo's own token, so a red gate is clear without a login to SonarQube.
+      # repo's own token, so a red gate is clear without a login to SonarQube. It sends the token to SONAR_HOST_URL,
+      # never to report-task.txt's serverUrl: the repo's own tools run before the scan and can write that file.
       - name: Show the failed quality gate conditions
         if: ${{ !cancelled() && steps.sonar.outcome == 'failure' && hashFiles('.scannerwork/report-task.txt') != '' }}
         uses: actions/github-script@v9
@@ -76,21 +80,17 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         with:
           script: |
-            const fs = require('fs');
-            const report = Object.fromEntries(fs.readFileSync('.scannerwork/report-task.txt', 'utf8')
-              .split('\n').filter((line) => line.includes('=')).map((line) => {
-                const at = line.indexOf('=');
-                return [line.slice(0, at), line.slice(at + 1)];
-              }));
+            const report = require('fs').readFileSync('.scannerwork/report-task.txt', 'utf8');
+            const field = (key) => report.match(new RegExp(`^${key}=(.*)$`, 'm'))?.[1];
             const get = async (path) => {
-              const response = await fetch(`${report.serverUrl}${path}`,
+              const response = await fetch(`${process.env.SONAR_HOST_URL}${path}`,
                 { headers: { Authorization: `Bearer ${process.env.SONAR_TOKEN}` } });
               if (!response.ok) throw new Error(`SonarQube answered ${response.status} to ${path}`);
               return response.json();
             };
-            const { task } = await get(`/api/ce/task?id=${encodeURIComponent(report.ceTaskId)}`);
+            const { task } = await get(`/api/ce/task?id=${encodeURIComponent(field('ceTaskId'))}`);
             if (!task.analysisId) {
-              core.warning(`The analysis ended ${task.status}, so it has no quality gate to read`);
+              core.warning(`The analysis task is ${task.status}, so it has no quality gate result to read`);
               return;
             }
             const { projectStatus } = await get(
@@ -99,4 +99,4 @@ jobs:
               core.error(`${condition.metricKey} is ${condition.actualValue}, ` +
                 `the gate wants it not ${condition.comparator === 'GT' ? 'above' : 'below'} ${condition.errorThreshold}`);
             }
-            core.info(`Details: ${report.dashboardUrl}`);
+            core.info(`Details: ${field('dashboardUrl')}`);
