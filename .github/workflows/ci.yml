@@ -99,4 +99,3 @@ jobs:
               core.error(`${condition.metricKey} is ${condition.actualValue}, ` +
                 `the gate wants it not ${condition.comparator === 'GT' ? 'above' : 'below'} ${condition.errorThreshold}`);
             }
-            core.info(`Details: ${field('dashboardUrl')}`);
