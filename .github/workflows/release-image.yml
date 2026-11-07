@@ -116,8 +116,8 @@ jobs:
       IS_DEV: ${{ inputs.dev }}
       TAG: ${{ needs.version.outputs.tag }}
       VERSION: ${{ needs.version.outputs.version }}
-      # Any workflow of the repo can write the gha cache, so only a public repo's dev build reads it. A private repo's
-      # build is either on the kk-forge runner or the runner launcher on a hosted runner, and neither takes such layers.
+      # Any workflow of the repo can write the gha cache, so only a public repo's dev build reads it. A private repo
+      # builds without it, on the kk-forge runner or, with `hosted`, on a hosted one.
       SHOULD_USE_GHA_CACHE: ${{ !github.event.repository.private && inputs.dev }}
     steps:
       - uses: actions/checkout@v7
