@@ -4,6 +4,11 @@ name: CI
 
 on:
   workflow_call:
+    inputs:
+      hosted:
+        description: Run on a GitHub-hosted runner even for a private repo, as release-image.yml's `hosted` does, so the caller's CI runs while the self-hosted runners are down
+        type: boolean
+        default: false
     secrets:
       SONAR_TOKEN:
         required: false
@@ -12,8 +17,9 @@ on:
 
 jobs:
   ci:
-    # A public repo runs on a hosted runner (AGENTS.md).
-    runs-on: ${{ github.event.repository.private && fromJSON('["self-hosted","swarm"]') || 'ubuntu-24.04' }}
+    # A public repo, or a caller that sets `hosted`, runs on a GitHub-hosted runner. A pull request from a fork must
+    # never run code on the kk-forge server.
+    runs-on: ${{ github.event.repository.private && !inputs.hosted && fromJSON('["self-hosted","swarm"]') || 'ubuntu-24.04' }}
     # A newer push makes this run moot. The event keeps a manual dev run and a push from cancelling each other.
     concurrency:
       group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}

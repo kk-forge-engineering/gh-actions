@@ -33,7 +33,8 @@ on:
 jobs:
   # The caller's tools run only in this job, which holds no registry token and no write token.
   version:
-    # A public repo runs on a hosted runner, as in ci.yml (AGENTS.md), and so does a caller that asks for one.
+    # A public repo, or a caller that sets `hosted`, runs on a GitHub-hosted runner. A pull request from a fork must
+    # never run code on the kk-forge server.
     runs-on: ${{ github.event.repository.private && !inputs.hosted && fromJSON('["self-hosted","swarm"]') || 'ubuntu-24.04' }}
     permissions:
       contents: read
@@ -46,6 +47,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          # The tags show whether this version is released already.
           fetch-depth: 0
           persist-credentials: false
 
@@ -54,7 +56,7 @@ jobs:
         if: runner.os == 'Linux'
         run: ldconfig -p | grep -q libatomic.so.1 || { sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends libatomic1; }
 
-      # Not from the gha cache, which any workflow of the repo can write.
+      # mise-action installs the tools fresh, not from the gha cache, which any workflow of the repo can write.
       - name: Install the tools from mise.toml
         uses: jdx/mise-action@v5
         with:
@@ -129,7 +131,8 @@ jobs:
           VERSION_TASK: ${{ inputs.version-task }}
         run: |
           set -euo pipefail
-          # The caller's task could have written any outputs.
+          # This check validates the version job's outputs again: the caller's task ran in that job and could have
+          # written any of them.
           suffix=''
           [ "$IS_DEV" != true ] || suffix="-dev\\.$GITHUB_RUN_NUMBER"
           if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+${suffix}$ && "$TAG" == "${TAG_PREFIX}v$VERSION" ]]; then
@@ -147,7 +150,8 @@ jobs:
             echo "release=true" >>"$GITHUB_OUTPUT"
           fi
 
-      # GitHub hands the cache token only to actions. This runs before the registry token is on disk.
+      # GitHub hands the cache token only to actions. This step runs before the login, so the action cannot read the
+      # registry token.
       - name: Expose the cache token to buildx
         if: ${{ steps.free.outputs.release == 'true' && !github.event.repository.private && inputs.dev }}
         uses: crazy-max/ghaction-github-runtime@v3
@@ -171,8 +175,9 @@ jobs:
         if: ${{ steps.free.outputs.release == 'true' }}
         env:
           IMAGES: ${{ inputs.images }}
-          IS_PRIVATE: ${{ github.event.repository.private }}
-          ON_KK_FORGE: ${{ github.event.repository.private && !inputs.hosted }}
+          IS_ON_KK_FORGE: ${{ github.event.repository.private && !inputs.hosted }}
+          # Any workflow of the repo can write the gha cache, so only a public repo's dev build reads it.
+          SHOULD_USE_GHA_CACHE: ${{ !github.event.repository.private && inputs.dev }}
         run: |
           set -euo pipefail
           names=() contexts=() dockerfiles=()
@@ -188,7 +193,7 @@ jobs:
             names+=("$name") contexts+=("$context") dockerfiles+=("$dockerfile")
           done <<<"$IMAGES"
           [ "${#names[@]}" -gt 0 ] || { echo "::error::images lists no image"; exit 1; }
-          if [ "$ON_KK_FORGE" = true ]; then
+          if [ "$IS_ON_KK_FORGE" = true ]; then
             # The launcher gives each kk-forge runner its own buildkitd at BUILDKIT_HOST.
             if [ -z "${BUILDKIT_HOST:-}" ]; then
               echo "::error::No BUILDKIT_HOST: a private repo builds only on the kk-forge runner"
@@ -196,13 +201,19 @@ jobs:
             fi
             docker buildx create --name kk-forge --driver remote "$BUILDKIT_HOST" --use
           else
-            docker buildx create --name kk-forge --use
+            # The driver is named, so a BUILDKIT_HOST in the runner's environment cannot turn this into a remote builder.
+            docker buildx create --name kk-forge --driver docker-container --use
           fi
           # The registry never overwrites a tag, so a version already there, even from a failed run, needs a raise.
           for name in "${names[@]}"; do
             ref=dr.kk-forge.com/$name:$VERSION
             if found=$(docker buildx imagetools inspect "$ref" 2>&1); then
-              echo "::error::$ref is already in the registry. Raise the version that the version task prints."
+              # A rerun keeps the run number, so a dev run that pushed before it failed needs a new run.
+              if [ "$IS_DEV" = true ]; then
+                echo "::error::$ref is already in the registry. Start a new run, which takes the next run number."
+              else
+                echo "::error::$ref is already in the registry. Raise the version that the version task prints."
+              fi
               exit 1
             elif ! grep -qi 'not found' <<<"$found"; then
               echo "::error::Could not check $ref in the registry: $found"
@@ -212,9 +223,8 @@ jobs:
           refs=()
           for i in "${!names[@]}"; do
             ref=dr.kk-forge.com/${names[$i]}:$VERSION
-            # Any workflow of the repo can write the gha cache, so only a dev build reads it.
             cache=()
-            if [ "$IS_PRIVATE" != true ] && [ "$IS_DEV" = true ]; then
+            if [ "$SHOULD_USE_GHA_CACHE" = true ]; then
               cache=(--cache-from "type=gha,scope=dev/${names[$i]}" --cache-to "type=gha,scope=dev/${names[$i]},mode=max")
             fi
             # --provenance=false pushes a plain manifest, so the digest is the image itself.
