@@ -59,9 +59,44 @@ jobs:
             exit 1
           fi
 
-      - name: SonarQube scan
+      - id: sonar
+        name: SonarQube scan
         if: ${{ !cancelled() && steps.token.outcome == 'success' }}
         uses: kk-forge-engineering/gh-actions/sonarqube-scan@v2
         with:
           sonar-token: ${{ secrets.SONAR_TOKEN }}
           sonar-host-url: https://sq.kk-forge.com
+
+      # The quality gate action says only that the gate failed. This step names each failed condition, read with the
+      # repo's own token, so a red gate is clear without a login to SonarQube.
+      - name: Show the failed quality gate conditions
+        if: ${{ !cancelled() && steps.sonar.outcome == 'failure' && hashFiles('.scannerwork/report-task.txt') != '' }}
+        uses: actions/github-script@v9
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          script: |
+            const fs = require('fs');
+            const report = Object.fromEntries(fs.readFileSync('.scannerwork/report-task.txt', 'utf8')
+              .split('\n').filter((line) => line.includes('=')).map((line) => {
+                const at = line.indexOf('=');
+                return [line.slice(0, at), line.slice(at + 1)];
+              }));
+            const get = async (path) => {
+              const response = await fetch(`${report.serverUrl}${path}`,
+                { headers: { Authorization: `Bearer ${process.env.SONAR_TOKEN}` } });
+              if (!response.ok) throw new Error(`SonarQube answered ${response.status} to ${path}`);
+              return response.json();
+            };
+            const { task } = await get(`/api/ce/task?id=${encodeURIComponent(report.ceTaskId)}`);
+            if (!task.analysisId) {
+              core.warning(`The analysis ended ${task.status}, so it has no quality gate to read`);
+              return;
+            }
+            const { projectStatus } = await get(
+              `/api/qualitygates/project_status?analysisId=${encodeURIComponent(task.analysisId)}`);
+            for (const condition of projectStatus.conditions.filter((c) => c.status === 'ERROR')) {
+              core.error(`${condition.metricKey} is ${condition.actualValue}, ` +
+                `the gate wants it not ${condition.comparator === 'GT' ? 'above' : 'below'} ${condition.errorThreshold}`);
+            }
+            core.info(`Details: ${report.dashboardUrl}`);
