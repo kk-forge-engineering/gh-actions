@@ -19,7 +19,7 @@ Reusable GitHub workflows and actions. Pin them to the major tag, such as `@v3`.
 
 - [Release image](/.github/workflows/release-image.yml) builds a package's images, pushes them to `dr.kk-forge.com` under the package's version, and publishes a GitHub Release `<tag-prefix>v<version>`. The Release body lists `dr.kk-forge.com/<name>:<version>` for each image. When the git tag already exists, the run ends green without a release, and warns when the tag points at another commit. When an image's version tag is already in the registry, the run fails, so an image never changes under its version. A private repo builds on the self-hosted runner, a public one on a hosted runner. Each input's meaning is in the workflow's `inputs`. What the inputs leave out:
   - A trial on the server is a dev release, from a caller job that runs on `workflow_dispatch` with `dev: true`.
-  - the secret `DOCKER_REGISTRY_TOKEN`: the token of the registry user named after the repo
+  - The secret `DOCKER_REGISTRY_TOKEN` is the token of the registry user named after the repo.
 
   The caller runs it as a second job of its CI, after `ci`, on the default branch:
   ```yaml

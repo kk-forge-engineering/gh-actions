@@ -1,5 +1,5 @@
 # Runs a repo's `mise run setup` and `check:ci`, then its SonarQube scan when it has a sonar-project.properties.
-# Called from each repo's CI (README.md), and run on this repo's own events below.
+# Each repo's CI calls it (README.md). This repo also runs it on its own events below.
 name: CI
 
 on:

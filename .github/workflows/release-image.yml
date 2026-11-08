@@ -1,5 +1,5 @@
 # Builds a package's images under the version its `version-task` prints, pushes them to dr.kk-forge.com and publishes
-# a GitHub Release listing them. Called as a job of the caller's CI (README.md).
+# a GitHub Release listing them. The caller's CI calls it as a job (README.md).
 name: Release image
 
 on:
@@ -52,7 +52,7 @@ jobs:
         if: runner.os == 'Linux'
         run: ldconfig -p | grep -q libatomic.so.1 || { sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends libatomic1; }
 
-      # mise-action installs the tools fresh, not from the gha cache, which any workflow of the repo can write.
+      # This step installs the tools fresh, not from the gha cache, which any workflow of the repo can write.
       - name: Install the tools from mise.toml
         uses: jdx/mise-action@v5
         with:
@@ -102,7 +102,7 @@ jobs:
     needs: version
     if: ${{ needs.version.outputs.release == 'true' }}
     runs-on: ${{ github.event.repository.private && fromJSON('["self-hosted","swarm"]') || 'ubuntu-24.04' }}
-    # One release at a time per kind: GitHub drops an older pending run for a newer one in the same group.
+    # One dev and one stable release run at a time. GitHub drops an older pending run when a newer one joins the group.
     concurrency:
       group: release-${{ github.repository }}-${{ inputs.dev && 'dev' || 'stable' }}
       cancel-in-progress: false
@@ -112,8 +112,8 @@ jobs:
       IS_DEV: ${{ inputs.dev }}
       TAG: ${{ needs.version.outputs.tag }}
       VERSION: ${{ needs.version.outputs.version }}
-      # Any workflow of the repo can write the gha cache, so only a public repo's dev build reads it. A private repo
-      # builds without it, on the kk-forge runner.
+      # Only a public repo's dev build uses the gha cache. Any workflow of the repo can write that cache, so a poisoned
+      # layer can reach only a dev image. A private repo builds without it, on the kk-forge runner.
       SHOULD_USE_GHA_CACHE: ${{ !github.event.repository.private && inputs.dev }}
     steps:
       - uses: actions/checkout@v7
@@ -175,6 +175,7 @@ jobs:
         env:
           IMAGES: ${{ inputs.images }}
           IS_PRIVATE: ${{ github.event.repository.private }}
+          VERSION_TASK: ${{ inputs.version-task }}
         run: |
           set -euo pipefail
           names=() contexts=() dockerfiles=()
@@ -200,11 +201,12 @@ jobs:
           else
             docker buildx create --name kk-forge --use
           fi
-          # An image never changes under its version, so a version already in the registry, even from a failed run,
-          # fails the run, and the message names the fix. A rerun keeps the run number, so a dev run needs a new run
-          # rather than a raise.
-          fix="Raise the version that the version task prints."
+          # This check fails the run when the version is already in the registry, even from a failed run, so an image
+          # never changes under its version. The error names the fix. A rerun keeps the run number, so a dev build needs
+          # a new run, not a raised version.
+          fix="Raise the version that mise run $VERSION_TASK prints."
           [ "$IS_DEV" != true ] || fix="Start a new run, which takes the next run number."
+          refs=()
           for name in "${names[@]}"; do
             ref=dr.kk-forge.com/$name:$VERSION
             if found=$(docker buildx imagetools inspect "$ref" 2>&1); then
@@ -214,17 +216,16 @@ jobs:
               echo "::error::Could not check $ref in the registry: $found"
               exit 1
             fi
+            refs+=("$ref")
           done
-          refs=()
           for i in "${!names[@]}"; do
-            ref=dr.kk-forge.com/${names[$i]}:$VERSION
             cache=()
             if [ "$SHOULD_USE_GHA_CACHE" = true ]; then
               cache=(--cache-from "type=gha,scope=dev/${names[$i]}" --cache-to "type=gha,scope=dev/${names[$i]},mode=max")
             fi
-            # --provenance=false pushes a plain manifest, so the digest is the image itself.
+            # --provenance=false pushes a plain manifest, so the digest the log shows is the image itself.
             docker buildx build "${contexts[$i]}" --file "${dockerfiles[$i]}" --platform linux/amd64 --push --provenance=false \
-              --tag "$ref" \
+              --tag "${refs[$i]}" \
               --label "org.opencontainers.image.version=$VERSION" \
               --label "org.opencontainers.image.revision=$GITHUB_SHA" \
               --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
@@ -235,8 +236,7 @@ jobs:
               echo "::error::The build of ${names[$i]} reported no image digest"
               exit 1
             fi
-            echo "Pushed $ref as $digest"
-            refs+=("$ref")
+            echo "Pushed ${refs[$i]} as $digest"
           done
           echo "refs=${refs[*]}" >>"$GITHUB_OUTPUT"
 
