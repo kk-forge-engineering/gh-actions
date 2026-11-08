@@ -9,6 +9,9 @@ on:
         required: false
   push:
     branches: ["**"]
+  # The same PR trigger README.md gives callers: a PR opened after its last push gets its SonarQube PR analysis.
+  pull_request:
+    types: [opened, reopened]
 
 jobs:
   ci:
@@ -28,6 +31,8 @@ jobs:
         with:
           # SonarQube reads the history to tell new code from old.
           fetch-depth: 0
+          # On a PR event this step checks out the PR head, the commit a push runs on, not GitHub's merge commit.
+          ref: ${{ github.event.pull_request.head.sha }}
           # `setup` runs third-party install scripts, so the token stays out of .git/config.
           persist-credentials: false
 
@@ -48,9 +53,12 @@ jobs:
 
       # The token check and the scan run after a red check:ci too, so SonarQube's quality gate on new code
       # still judges a pull request in a repo below the coverage floor. A failed setup skips check:ci, and so both.
+      # A PR from a fork gets no secrets, so it skips both.
       - id: token
         name: Check the SonarQube token
-        if: ${{ !cancelled() && steps.check.outcome != 'skipped' && hashFiles('sonar-project.properties') != '' }}
+        if: >-
+          ${{ !cancelled() && steps.check.outcome != 'skipped' && hashFiles('sonar-project.properties') != ''
+          && (!github.event.pull_request || github.event.pull_request.head.repo.full_name == github.repository) }}
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
