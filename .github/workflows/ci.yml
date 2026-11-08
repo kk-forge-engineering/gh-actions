@@ -58,7 +58,7 @@ jobs:
         name: Check the SonarQube token
         if: >-
           ${{ !cancelled() && steps.check.outcome != 'skipped' && hashFiles('sonar-project.properties') != ''
-          && !github.event.pull_request.head.repo.fork }}
+          && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
