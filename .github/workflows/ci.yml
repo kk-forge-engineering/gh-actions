@@ -70,10 +70,11 @@ jobs:
           sonar-token: ${{ secrets.SONAR_TOKEN }}
           sonar-host-url: ${{ env.SONAR_HOST_URL }}
 
-      # The quality gate action says only that the gate failed. This step names each failed condition, read with the
-      # repo's own token, so a red gate is clear without a login to SonarQube. It sends the token to SONAR_HOST_URL,
-      # never to report-task.txt's serverUrl: the repo's own tools run before the scan and can write that file.
-      - name: Show the failed quality gate conditions
+      # The quality gate action says only that the gate failed. This step names each failed condition, then the new
+      # issues and security hotspots at their file and line, read with the repo's own token, so a red gate is clear
+      # without a login to SonarQube. It sends the token to SONAR_HOST_URL, never to report-task.txt's serverUrl: the
+      # repo's own tools run before the scan and can write that file.
+      - name: Show why the quality gate failed
         if: ${{ !cancelled() && steps.sonar.outcome == 'failure' && hashFiles('.scannerwork/report-task.txt') != '' }}
         uses: actions/github-script@v9
         env:
@@ -82,20 +83,42 @@ jobs:
           script: |
             const report = require('fs').readFileSync('.scannerwork/report-task.txt', 'utf8');
             const field = (key) => report.match(new RegExp(`^${key}=(.*)$`, 'm'))?.[1];
-            const get = async (path) => {
-              const response = await fetch(`${process.env.SONAR_HOST_URL}${path}`,
-                { headers: { Authorization: `Bearer ${process.env.SONAR_TOKEN}` } });
+            const get = async (path, query) => {
+              const url = `${process.env.SONAR_HOST_URL}${path}?${new URLSearchParams(query)}`;
+              const response = await fetch(url, { headers: { Authorization: `Bearer ${process.env.SONAR_TOKEN}` } });
               if (!response.ok) throw new Error(`SonarQube answered ${response.status} to ${path}`);
               return response.json();
             };
-            const { task } = await get(`/api/ce/task?id=${encodeURIComponent(field('ceTaskId'))}`);
+            const { task } = await get('/api/ce/task', { id: field('ceTaskId') });
             if (!task.analysisId) {
               core.warning(`The analysis task is ${task.status}, so it has no quality gate result to read`);
               return;
             }
-            const { projectStatus } = await get(
-              `/api/qualitygates/project_status?analysisId=${encodeURIComponent(task.analysisId)}`);
+            const { projectStatus } = await get('/api/qualitygates/project_status', { analysisId: task.analysisId });
             for (const condition of projectStatus.conditions.filter((c) => c.status === 'ERROR')) {
               core.error(`${condition.metricKey} is ${condition.actualValue}, ` +
                 `the gate wants it not ${condition.comparator === 'GT' ? 'above' : 'below'} ${condition.errorThreshold}`);
             }
+            // A PR analysis holds only the PR's code, so all its issues are new. A branch's are those in its new code.
+            const scope = task.pullRequest
+              ? { pullRequest: task.pullRequest }
+              : { branch: task.branch, inNewCodePeriod: true };
+            // A component key is <project key>:<path from the project's base directory, the repo root here>.
+            const file = (component) => component.slice(task.componentKey.length + 1);
+            // GitHub turns only a step's first 10 errors into annotations, and the log keeps the rest. The list
+            // stops at 100 of each kind and counts what it left out.
+            const limit = 100;
+            const issues = await get('/api/issues/search',
+              { components: task.componentKey, issueStatuses: 'OPEN,CONFIRMED', ps: limit, ...scope });
+            const hotspots = await get('/api/hotspots/search',
+              { projectKey: task.componentKey, status: 'TO_REVIEW', ps: limit, ...scope });
+            for (const issue of issues.issues) {
+              core.error(`${issue.message} (${issue.rule})`,
+                { title: `New issue ${issue.rule}`, file: file(issue.component), startLine: issue.line });
+            }
+            for (const hotspot of hotspots.hotspots) {
+              core.error(`${hotspot.message} (${hotspot.ruleKey}), to review in SonarQube`,
+                { title: `New hotspot ${hotspot.ruleKey}`, file: file(hotspot.component), startLine: hotspot.line });
+            }
+            const left = issues.paging.total - issues.issues.length + hotspots.paging.total - hotspots.hotspots.length;
+            if (left > 0) core.warning(`${left} more new issues and hotspots are in SonarQube`);
