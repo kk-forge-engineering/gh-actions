@@ -81,6 +81,25 @@ jobs:
           # A rerun of a red scan, say after marking a false positive in SonarQube, needs the artifact still there.
           retention-days: 7
 
+      # SonarJS resolves types through what setup installs and generates, such as node_modules and a tsconfig it
+      # extends. Without them it reads TypeScript untyped and reports false issues. These files are data the scan only
+      # reads.
+      - name: Upload the type files
+        if: ${{ !cancelled() && steps.upload.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: sonar-types
+          path: |
+            **/*.d.ts
+            **/*.d.mts
+            **/*.d.cts
+            **/package.json
+            **/tsconfig*.json
+            !.git/**
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 7
+
   # The SonarQube token lives only in this job, which runs none of the repo's tools: setup's third-party install
   # scripts could otherwise reach it through GITHUB_ENV, GITHUB_PATH or a process left running.
   sonar:
@@ -158,6 +177,41 @@ jobs:
             mkdir -p -- "$(dirname -- "$path")"
             cp --no-dereference --remove-destination -- "$REPORTS/$path" "$path"
           done <<<"$paths"
+
+      - name: Download the type files
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          name: sonar-types
+          path: ${{ runner.temp }}/sonar-types
+
+      # Only a type file the checkout lacks leaves the artifact, so no file the repo commits is ever replaced.
+      - name: Put the type files in place
+        env:
+          TYPES: ${{ runner.temp }}/sonar-types
+        run: |
+          set -euo pipefail
+          [ -d "$TYPES" ] || exit 0
+          placed=0
+          while IFS= read -r -d '' source; do
+            path=${source#"$TYPES"/}
+            case "$path" in
+              -* | *..* | .git/* | .scannerwork/*) continue ;;
+              *.d.ts | *.d.mts | *.d.cts | *package.json | *tsconfig*.json) ;;
+              *) continue ;;
+            esac
+            if [ -e "$path" ] || [ -L "$path" ]; then
+              continue
+            fi
+            dest=$(realpath -m -- "$path")
+            if [ "${dest#"$GITHUB_WORKSPACE"/}" = "$dest" ]; then
+              continue
+            fi
+            mkdir -p -- "$(dirname -- "$path")"
+            cp --no-dereference -- "$source" "$path"
+            placed=$((placed + 1))
+          done < <(find "$TYPES" -type f -print0)
+          echo "Placed $placed type files"
 
       - id: sonar
         name: SonarQube scan
