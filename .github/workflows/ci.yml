@@ -10,7 +10,7 @@ on:
         required: false
   push:
     branches: ["**"]
-  # For a caller with the same trigger (README.md), a PR opened after its last push gets its SonarQube PR analysis.
+  # The same PR trigger README.md gives callers: a PR opened after its last push gets its SonarQube PR analysis.
   pull_request:
     types: [opened, reopened]
 
@@ -31,7 +31,7 @@ jobs:
         with:
           # SonarQube reads the history to tell new code from old.
           fetch-depth: 0
-          # A PR event checks out the PR head, the commit a push runs on, rather than GitHub's merge commit.
+          # On a PR event this step checks out the PR head, the commit a push runs on, not GitHub's merge commit.
           ref: ${{ github.event.pull_request.head.sha }}
           # `setup` runs third-party install scripts, so the token stays out of .git/config.
           persist-credentials: false
