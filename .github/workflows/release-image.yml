@@ -21,10 +21,6 @@ on:
         description: Release X.Y.Z-dev.N from the current branch, instead of X.Y.Z from the default branch
         type: boolean
         default: false
-      hosted:
-        description: Build on a GitHub-hosted runner even for a private repo, for an image the self-hosted runners must not build, such as the one that starts them
-        type: boolean
-        default: false
     secrets:
       DOCKER_REGISTRY_TOKEN:
         description: The token the registry user named after the calling repo logs in with
@@ -33,9 +29,9 @@ on:
 jobs:
   # The caller's tools run only in this job, which holds no registry token and no write token.
   version:
-    # A public repo, or a caller that sets `hosted`, runs on a GitHub-hosted runner. A pull request from a fork must
-    # never run code on the kk-forge server.
-    runs-on: ${{ github.event.repository.private && !inputs.hosted && fromJSON('["self-hosted","swarm"]') || 'ubuntu-24.04' }}
+    # A public repo never runs on the kk-forge runner, as in ci.yml: a pull request from a fork would run someone
+    # else's code on the kk-forge server. So a public repo runs on a hosted runner.
+    runs-on: ${{ github.event.repository.private && fromJSON('["self-hosted","swarm"]') || 'ubuntu-24.04' }}
     permissions:
       contents: read
     outputs:
@@ -105,7 +101,7 @@ jobs:
   release:
     needs: version
     if: ${{ needs.version.outputs.release == 'true' }}
-    runs-on: ${{ github.event.repository.private && !inputs.hosted && fromJSON('["self-hosted","swarm"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ github.event.repository.private && fromJSON('["self-hosted","swarm"]') || 'ubuntu-24.04' }}
     # One release at a time per kind: GitHub drops an older pending run for a newer one in the same group.
     concurrency:
       group: release-${{ github.repository }}-${{ inputs.dev && 'dev' || 'stable' }}
@@ -117,7 +113,7 @@ jobs:
       TAG: ${{ needs.version.outputs.tag }}
       VERSION: ${{ needs.version.outputs.version }}
       # Any workflow of the repo can write the gha cache, so only a public repo's dev build reads it. A private repo
-      # builds without it, on the kk-forge runner or, with `hosted`, on a hosted one.
+      # builds without it, on the kk-forge runner.
       SHOULD_USE_GHA_CACHE: ${{ !github.event.repository.private && inputs.dev }}
     steps:
       - uses: actions/checkout@v7
@@ -178,7 +174,7 @@ jobs:
         if: ${{ steps.free.outputs.release == 'true' }}
         env:
           IMAGES: ${{ inputs.images }}
-          IS_ON_KK_FORGE: ${{ github.event.repository.private && !inputs.hosted }}
+          IS_PRIVATE: ${{ github.event.repository.private }}
         run: |
           set -euo pipefail
           names=() contexts=() dockerfiles=()
@@ -194,7 +190,7 @@ jobs:
             names+=("$name") contexts+=("$context") dockerfiles+=("$dockerfile")
           done <<<"$IMAGES"
           [ "${#names[@]}" -gt 0 ] || { echo "::error::images lists no image"; exit 1; }
-          if [ "$IS_ON_KK_FORGE" = true ]; then
+          if [ "$IS_PRIVATE" = true ]; then
             # The launcher gives each kk-forge runner its own buildkitd at BUILDKIT_HOST.
             if [ -z "${BUILDKIT_HOST:-}" ]; then
               echo "::error::No BUILDKIT_HOST: a private repo builds only on the kk-forge runner"
@@ -202,11 +198,11 @@ jobs:
             fi
             docker buildx create --name kk-forge --driver remote "$BUILDKIT_HOST" --use
           else
-            # This step names the driver, so buildx ignores a BUILDKIT_HOST in the runner's environment.
-            docker buildx create --name kk-forge --driver docker-container --use
+            docker buildx create --name kk-forge --use
           fi
-          # The registry never overwrites a tag, so a version already there, even from a failed run, fails the run, and the
-          # message names the fix. A rerun keeps the run number, so a dev run needs a new run rather than a raise.
+          # An image never changes under its version, so a version already in the registry, even from a failed run,
+          # fails the run, and the message names the fix. A rerun keeps the run number, so a dev run needs a new run
+          # rather than a raise.
           fix="Raise the version that the version task prints."
           [ "$IS_DEV" != true ] || fix="Start a new run, which takes the next run number."
           for name in "${names[@]}"; do
