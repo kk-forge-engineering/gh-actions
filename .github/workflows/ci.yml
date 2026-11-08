@@ -15,7 +15,8 @@ jobs:
     # A public repo never runs on the kk-forge runner: a pull request from a fork would run someone else's code on
     # the kk-forge server. So a public repo runs on a hosted runner.
     runs-on: ${{ github.event.repository.private && fromJSON('["self-hosted","swarm"]') || 'ubuntu-24.04' }}
-    # A newer run of the same event and ref makes this one moot. Runs of different events never cancel each other.
+    # A newer run of the same event and ref makes this one moot. A push never cancels a `workflow_dispatch` run on
+    # its branch: the caller's dev release needs this job and would be cancelled with it.
     concurrency:
       group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
       cancel-in-progress: true

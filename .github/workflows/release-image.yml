@@ -26,6 +26,10 @@ on:
         description: The token the registry user named after the calling repo logs in with
         required: true
 
+env:
+  # Each warning or error about a taken version ends with this fix.
+  RAISE_VERSION: Raise the version that mise run ${{ inputs.version-task }} prints.
+
 jobs:
   # The caller's tools run only in this job, which holds no registry token and no write token.
   version:
@@ -90,7 +94,7 @@ jobs:
             if [ "$tagged" = "$GITHUB_SHA" ]; then
               echo "$tag is already released from this commit"
             else
-              echo "::warning::$tag is already released from ${tagged:0:7}, so this commit releases nothing. Raise the version that mise run $VERSION_TASK prints."
+              echo "::warning::$tag is already released from ${tagged:0:7}, so this commit releases nothing. $RAISE_VERSION"
             fi
             echo "release=false" >>"$GITHUB_OUTPUT"
             exit 0
@@ -127,7 +131,6 @@ jobs:
         id: free
         env:
           TAG_PREFIX: ${{ inputs.tag-prefix }}
-          VERSION_TASK: ${{ inputs.version-task }}
         run: |
           set -euo pipefail
           # This check validates the version job's outputs again: the caller's task ran in that job and could have
@@ -142,7 +145,7 @@ jobs:
             if [ "$tagged" = "$GITHUB_SHA" ]; then
               echo "$TAG was released from this commit while this run waited"
             else
-              echo "::warning::$TAG was released from ${tagged:0:7} while this run waited, so this commit releases nothing. Raise the version that mise run $VERSION_TASK prints."
+              echo "::warning::$TAG was released from ${tagged:0:7} while this run waited, so this commit releases nothing. $RAISE_VERSION"
             fi
             echo "release=false" >>"$GITHUB_OUTPUT"
           else
@@ -175,7 +178,6 @@ jobs:
         env:
           IMAGES: ${{ inputs.images }}
           IS_PRIVATE: ${{ github.event.repository.private }}
-          VERSION_TASK: ${{ inputs.version-task }}
         run: |
           set -euo pipefail
           names=() contexts=() dockerfiles=()
@@ -204,7 +206,7 @@ jobs:
           # This check fails the run when the version is already in the registry, even from a failed run, so an image
           # never changes under its version. The error names the fix. A rerun keeps the run number, so a dev build needs
           # a new run, not a raised version.
-          fix="Raise the version that mise run $VERSION_TASK prints."
+          fix=$RAISE_VERSION
           [ "$IS_DEV" != true ] || fix="Start a new run, which takes the next run number."
           refs=()
           for name in "${names[@]}"; do
