@@ -1,6 +1,6 @@
 # GitHub actions
 
-Reusable GitHub workflows and actions. Pin them to the major tag, such as `@v3`. `v2` keeps Release image's earlier inputs.
+Reusable GitHub workflows and actions. Pin them to the major tag, such as `@v4`. `v3` keeps Release image's `latest` tag and digest references, and `v2` its earlier inputs.
 
 ## Workflows
 
@@ -12,7 +12,7 @@ Reusable GitHub workflows and actions. Pin them to the major tag, such as `@v3`.
       branches: ["**"]
   jobs:
     ci:
-      uses: kk-forge-engineering/gh-actions/.github/workflows/ci.yml@v3
+      uses: kk-forge-engineering/gh-actions/.github/workflows/ci.yml@v4
       permissions: { contents: read, pull-requests: read }
       secrets: { SONAR_TOKEN: "${{ secrets.SONAR_TOKEN }}" }
   ```
@@ -26,7 +26,7 @@ Reusable GitHub workflows and actions. Pin them to the major tag, such as `@v3`.
     release:
       needs: ci
       if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-      uses: kk-forge-engineering/gh-actions/.github/workflows/release-image.yml@v3
+      uses: kk-forge-engineering/gh-actions/.github/workflows/release-image.yml@v4
       permissions: { contents: write }
       with:
         version-task: version
