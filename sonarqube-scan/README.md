@@ -37,4 +37,4 @@ sonar.coverage.exclusions=packages/backend/src/migrations/*,packages/backend/src
 
 ## Full example
 
-The [CI workflow](/.github/workflows/ci.yml) runs this action after the repo's `check:ci`. Its caller is in the [root README](/README.md#workflows).
+The [CI workflow](/.github/workflows/ci.yml) runs this action after the repo's `check:ci`. When the quality gate fails, it lists the failed conditions, then the new issues and security hotspots at their file and line. It reads them with the repo's `SONAR_TOKEN`. Its caller is in the [root README](/README.md#workflows).
