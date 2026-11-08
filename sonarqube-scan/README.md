@@ -21,15 +21,15 @@ sonar.test.inclusions=**/*.test.*,**/*.spec.*
 sonar.coverage.exclusions=packages/backend/src/migrations/*,packages/backend/src/dbUtils.ts
 ```
 
-- The coverage reports that the file names. The job writes them before this action runs.
+- The coverage reports that the file names, in the workspace before this action runs.
 - A checkout with `fetch-depth: 0`. SonarQube reads the history to tell new code from old.
-- `pull-requests: read` on the job. The action looks up the open pull request for the commit.
+- `pull-requests: read` on the job. On a push, the action looks up the open pull request for the commit.
 
 ## Usage
 
 ```yml
 - name: SonarQube scan
-  uses: kk-forge-engineering/gh-actions/sonarqube-scan@v2
+  uses: kk-forge-engineering/gh-actions/sonarqube-scan@v4
   with:
     sonar-token: ${{ secrets.SONAR_TOKEN }}
     sonar-host-url: ${{ secrets.SONAR_HOST_URL }}
@@ -37,4 +37,4 @@ sonar.coverage.exclusions=packages/backend/src/migrations/*,packages/backend/src
 
 ## Full example
 
-The [CI workflow](/.github/workflows/ci.yml) runs this action after the repo's `check:ci`. When the quality gate fails, the workflow lists the failed conditions, then the new issues and security hotspots at their file and line. It reads them with the repo's `SONAR_TOKEN`. Its caller is in the [root README](/README.md#workflows).
+The [CI workflow](/.github/workflows/ci.yml) runs this action in a job of its own, after the repo's `check:ci` in another job. When the quality gate fails, the workflow lists the failed conditions, then the new issues and security hotspots at their file and line. It reads them with the repo's `SONAR_TOKEN`. Its caller is in the [root README](/README.md#workflows).

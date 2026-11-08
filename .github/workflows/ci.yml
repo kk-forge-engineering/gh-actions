@@ -109,8 +109,8 @@ jobs:
     # A huge artifact must not hold the kk-forge runner for the default six hours.
     timeout-minutes: 30
     # The scan runs after a red check:ci too, so SonarQube's quality gate on new code still judges a pull request in a
-    # repo below the coverage floor. A failed setup lists no reports, and so skips it. A PR whose head is outside the
-    # repo gets no secrets, so it skips it too.
+    # repo below the coverage floor. A failed setup skips check:ci and the report upload, and so the scan. A PR whose
+    # head is outside the repo gets no secrets, so it skips the scan too.
     if: >-
       ${{ !cancelled() && needs.ci.result != 'cancelled' && needs.ci.outputs.has-reports == 'true'
       && (!github.event.pull_request || github.event.pull_request.head.repo.full_name == github.repository) }}
@@ -239,8 +239,6 @@ jobs:
       - name: Show why the quality gate failed
         if: ${{ failure() && steps.sonar.outcome == 'failure' && hashFiles('.scannerwork/report-task.txt') != '' }}
         uses: actions/github-script@v9
-        # The step pins host and token in its own env, which wins over a `GITHUB_ENV` the repo's tools could
-        # have written.
         env:
           SONAR_HOST_URL: https://sq.kk-forge.com
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
