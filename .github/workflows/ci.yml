@@ -83,9 +83,12 @@ jobs:
           script: |
             const report = require('fs').readFileSync('.scannerwork/report-task.txt', 'utf8');
             const field = (key) => report.match(new RegExp(`^${key}=(.*)$`, 'm'))?.[1];
-            const get = async (path, query) => {
+            const get = async (path, query, { isForbiddenOk = false } = {}) => {
               const url = `${process.env.SONAR_HOST_URL}${path}?${new URLSearchParams(query)}`;
               const response = await fetch(url, { headers: { Authorization: `Bearer ${process.env.SONAR_TOKEN}` } });
+              if (isForbiddenOk && response.status === 403) {
+                return null;
+              }
               if (!response.ok) {
                 throw new Error(`SonarQube answered ${response.status} to ${path}`);
               }
@@ -111,17 +114,25 @@ jobs:
             // The list stops at 100 issues and 100 hotspots and counts what it left out. GitHub turns only a step's
             // first 10 errors into annotations, and the log keeps the rest.
             const limit = 100;
+            // Without Browse on the project, hotspots answer 403 while issues answer an empty list, so hotspots are
+            // read first.
+            const hotspots = await get('/api/hotspots/search',
+              { projectKey: task.componentKey, status: 'TO_REVIEW', ps: limit, ...scope }, { isForbiddenOk: true });
+            if (!hotspots) {
+              core.warning(`The SonarQube token may not browse ${task.componentKey}, ` +
+                'so its new issues and hotspots stay in SonarQube');
+              return;
+            }
             const issues = await get('/api/issues/search',
               { components: task.componentKey, issueStatuses: 'OPEN,CONFIRMED', ps: limit, ...scope });
-            const hotspots = await get('/api/hotspots/search',
-              { projectKey: task.componentKey, status: 'TO_REVIEW', ps: limit, ...scope });
-            for (const issue of issues.issues) {
-              core.error(`${issue.message} (${issue.rule})`,
-                { title: `New issue ${issue.rule}`, file: file(issue.component), startLine: issue.line });
-            }
+            // Hotspots are few, so they come before issues within GitHub's first 10 annotations.
             for (const hotspot of hotspots.hotspots) {
               core.error(`${hotspot.message} (${hotspot.ruleKey}), to review in SonarQube`,
                 { title: `New hotspot ${hotspot.ruleKey}`, file: file(hotspot.component), startLine: hotspot.line });
+            }
+            for (const issue of issues.issues) {
+              core.error(`${issue.message} (${issue.rule})`,
+                { title: `New issue ${issue.rule}`, file: file(issue.component), startLine: issue.line });
             }
             const left = issues.paging.total - issues.issues.length + hotspots.paging.total - hotspots.hotspots.length;
             if (left > 0) {
