@@ -27,8 +27,7 @@ jobs:
       group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
       cancel-in-progress: true
     outputs:
-      has-reports: ${{ steps.check.outcome != 'skipped' && steps.reports.outcome == 'success' }}
-      report-paths: ${{ steps.reports.outputs.paths }}
+      has-reports: ${{ steps.upload.outcome == 'success' }}
     permissions:
       contents: read
       pull-requests: read
@@ -53,7 +52,8 @@ jobs:
             sed -n 's/^[[:space:]]*sonar\.[A-Za-z0-9.]*[Rr]eportPaths[[:space:]]*[=:][[:space:]]*//p' | tr ',' '\n' |
             sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep -v '^$' || true)
           # sonar-project.properties rides along, so the artifact's root is always the repo root.
-          { echo 'paths<<EOF'; echo sonar-project.properties; echo "$paths"; echo EOF; } >>"$GITHUB_OUTPUT"
+          d=$(openssl rand -hex 16)
+          { echo "paths<<$d"; echo sonar-project.properties; echo "$paths"; echo "$d"; } >>"$GITHUB_OUTPUT"
 
       # Node 26's binary links libatomic, which the self-hosted runner's image lacks, so mise fails to install it.
       - name: Install libatomic1
@@ -70,14 +70,16 @@ jobs:
       - id: check
         run: mise run --continue-on-error check:ci
 
-      - name: Upload the coverage reports
+      - id: upload
+        name: Upload the coverage reports
         if: ${{ !cancelled() && steps.check.outcome != 'skipped' && steps.reports.outcome == 'success' }}
         uses: actions/upload-artifact@v7
         with:
           name: sonar-reports
           path: ${{ steps.reports.outputs.paths }}
-          if-no-files-found: warn
-          retention-days: 1
+          include-hidden-files: true
+          # A rerun of a red scan, say after marking a false positive in SonarQube, needs the artifact still there.
+          retention-days: 7
 
   # The SonarQube token lives only in this job, which runs none of the repo's tools: setup's third-party install
   # scripts could otherwise reach it through GITHUB_ENV, GITHUB_PATH or a process left running.
@@ -87,7 +89,7 @@ jobs:
     # repo below the coverage floor. A failed setup lists no reports, and so skips it. A PR whose head is outside the
     # repo gets no secrets, so it skips it too.
     if: >-
-      ${{ !cancelled() && needs.ci.outputs.has-reports == 'true'
+      ${{ !cancelled() && needs.ci.result != 'cancelled' && needs.ci.outputs.has-reports == 'true'
       && (!github.event.pull_request || github.event.pull_request.head.repo.full_name == github.repository) }}
     runs-on: ${{ github.event.repository.private && fromJSON('["self-hosted","swarm"]') || 'ubuntu-24.04' }}
     concurrency:
@@ -103,6 +105,11 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
+
+      # SonarJS needs Node and may fall back to the scanner's own, which can link libatomic as Node 26 does.
+      - name: Install libatomic1
+        if: runner.os == 'Linux'
+        run: ldconfig -p | grep -q libatomic.so.1 || { sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends libatomic1; }
 
       - name: Check the SonarQube token
         env:
@@ -121,19 +128,36 @@ jobs:
           name: sonar-reports
           path: ${{ runner.temp }}/sonar-reports
 
+      # The list comes from this job's own checkout, never from the ci job, whose tools could forge its outputs. A
+      # path leaves the artifact only to a plain file inside the workspace.
       - name: Put the coverage reports in place
         env:
           REPORTS: ${{ runner.temp }}/sonar-reports
-          PATHS: ${{ needs.ci.outputs.report-paths }}
         run: |
           set -euo pipefail
+          paths=$(git show HEAD:sonar-project.properties | tr -d '\r' |
+            sed -n 's/^[[:space:]]*sonar\.[A-Za-z0-9.]*[Rr]eportPaths[[:space:]]*[=:][[:space:]]*//p' | tr ',' '\n' |
+            sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep -v '^$' || true)
           while IFS= read -r path; do
-            if [ "$path" = sonar-project.properties ] || [ ! -f "$REPORTS/$path" ]; then
+            [ -n "$path" ] || continue
+            case "$path" in
+              /* | -* | *..* | *[*?[]* | .git/* | .scannerwork/* | sonar-project.properties | ./*)
+                echo "::warning::$path in sonar-project.properties is not a plain repo-relative file path, so the scan skips it"
+                continue
+                ;;
+            esac
+            dest=$(realpath -m -- "$path")
+            if [ "${dest#"$GITHUB_WORKSPACE"/}" = "$dest" ] || [ -L "$path" ]; then
+              echo "::warning::$path leads outside the workspace or through a link, so the scan skips it"
               continue
             fi
-            mkdir -p "$(dirname "$path")"
-            cp "$REPORTS/$path" "$path"
-          done <<<"$PATHS"
+            if [ ! -f "$REPORTS/$path" ]; then
+              echo "::warning::check:ci wrote no file at $path, which sonar-project.properties names"
+              continue
+            fi
+            mkdir -p -- "$(dirname -- "$path")"
+            cp --no-dereference --remove-destination -- "$REPORTS/$path" "$path"
+          done <<<"$paths"
 
       - id: sonar
         name: SonarQube scan
