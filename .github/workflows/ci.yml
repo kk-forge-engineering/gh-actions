@@ -67,14 +67,15 @@ jobs:
           sonar-token: ${{ secrets.SONAR_TOKEN }}
           sonar-host-url: https://sq.kk-forge.com
 
-      # The quality gate action says only that the gate failed. This step names each failed condition, then the new
-      # issues and security hotspots at their file and line, read with the repo's own token, so a red gate is clear
-      # without a login to SonarQube. It sends the token to SONAR_HOST_URL, never to report-task.txt's serverUrl: the
-      # repo's own tools run before the scan and can write that file.
+      # This step names each failed condition, then the new issues and security hotspots at their file and line, so a
+      # red gate reads without a SonarQube login. The quality gate action says only that the gate failed. The step sends
+      # the repo's token to `SONAR_HOST_URL`, never to the `serverUrl` in `report-task.txt`: the repo's own tools run
+      # before the scan and can write that file.
       - name: Show why the quality gate failed
         if: ${{ !cancelled() && steps.sonar.outcome == 'failure' && hashFiles('.scannerwork/report-task.txt') != '' }}
         uses: actions/github-script@v9
-        # A step's own env wins over GITHUB_ENV, which the repo's tools could have written.
+        # The step pins host and token in its own env, which wins over a `GITHUB_ENV` the repo's tools could
+        # have written.
         env:
           SONAR_HOST_URL: https://sq.kk-forge.com
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -85,7 +86,9 @@ jobs:
             const get = async (path, query) => {
               const url = `${process.env.SONAR_HOST_URL}${path}?${new URLSearchParams(query)}`;
               const response = await fetch(url, { headers: { Authorization: `Bearer ${process.env.SONAR_TOKEN}` } });
-              if (!response.ok) throw new Error(`SonarQube answered ${response.status} to ${path}`);
+              if (!response.ok) {
+                throw new Error(`SonarQube answered ${response.status} to ${path}`);
+              }
               return response.json();
             };
             const { task } = await get('/api/ce/task', { id: field('ceTaskId') });
@@ -98,14 +101,15 @@ jobs:
               core.error(`${condition.metricKey} is ${condition.actualValue}, ` +
                 `the gate wants it not ${condition.comparator === 'GT' ? 'above' : 'below'} ${condition.errorThreshold}`);
             }
-            // A PR analysis holds only the PR's code, so all its issues are new. A branch's are those in its new code.
+            // A PR analysis holds only the PR's code, so all its issues are new. A branch's new issues are those in
+            // its new code period.
             const scope = task.pullRequest
               ? { pullRequest: task.pullRequest }
               : { branch: task.branch, inNewCodePeriod: true };
             // A component key is <project key>:<path from the project's base directory, the repo root here>.
             const file = (component) => component.slice(task.componentKey.length + 1);
-            // GitHub turns only a step's first 10 errors into annotations, and the log keeps the rest. The list
-            // stops at 100 of each kind and counts what it left out.
+            // The list stops at 100 issues and 100 hotspots and counts what it left out. GitHub turns only a step's
+            // first 10 errors into annotations, and the log keeps the rest.
             const limit = 100;
             const issues = await get('/api/issues/search',
               { components: task.componentKey, issueStatuses: 'OPEN,CONFIRMED', ps: limit, ...scope });
@@ -120,4 +124,6 @@ jobs:
                 { title: `New hotspot ${hotspot.ruleKey}`, file: file(hotspot.component), startLine: hotspot.line });
             }
             const left = issues.paging.total - issues.issues.length + hotspots.paging.total - hotspots.hotspots.length;
-            if (left > 0) core.warning(`${left} more new issues and hotspots are in SonarQube`);
+            if (left > 0) {
+              core.warning(`${left} more new issues and hotspots are in SonarQube`);
+            }
