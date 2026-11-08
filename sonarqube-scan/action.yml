@@ -12,12 +12,13 @@ runs:
   using: "composite"
   steps:
     # The scanner reads the repo's sonar-project.properties and takes these properties on top, as JSON in
-    # SONARQUBE_SCANNER_PARAMS. A push to a branch with an open PR is analysed as that PR, so SonarQube
-    # decorates it.
+    # SONARQUBE_SCANNER_PARAMS. A PR event, or a push to a branch with an open PR, is analysed as that PR, so
+    # SonarQube decorates it. The host goes in too, so sonar-project.properties cannot send the token elsewhere.
     - name: Name the branch or PR
       uses: actions/github-script@v9
       env:
         COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        HOST_URL: ${{ inputs.sonar-host-url }}
       with:
         script: |
           const commit = process.env.COMMIT_SHA;
@@ -25,7 +26,9 @@ runs:
             ...context.repo,
             commit_sha: commit,
           });
-          const pr = pullRequests.find((candidate) => candidate.state === 'open' && candidate.head.sha === commit);
+          // A PR event names its PR, which the lookup by commit can miss while GitHub indexes a new PR.
+          const pr = context.payload.pull_request
+            ?? pullRequests.find((candidate) => candidate.state === 'open' && candidate.head.sha === commit);
           // A branch property makes SonarQube analyse a branch, so a PR analysis must not carry one.
           const params = pr
             ? {
@@ -36,6 +39,7 @@ runs:
               }
             : { 'sonar.branch.name': process.env.GITHUB_REF_NAME };
           params['sonar.projectVersion'] = commit;
+          params['sonar.host.url'] = process.env.HOST_URL;
           console.log('SonarQube parameters:', params);
           core.exportVariable('SONARQUBE_SCANNER_PARAMS', JSON.stringify(params));
 

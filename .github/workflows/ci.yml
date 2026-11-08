@@ -23,6 +23,9 @@ jobs:
     concurrency:
       group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
       cancel-in-progress: true
+    outputs:
+      has-reports: ${{ steps.check.outcome != 'skipped' && steps.reports.outcome == 'success' }}
+      report-paths: ${{ steps.reports.outputs.paths }}
     permissions:
       contents: read
       pull-requests: read
@@ -35,6 +38,19 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           # `setup` runs third-party install scripts, so the token stays out of .git/config.
           persist-credentials: false
+
+      # The scan runs in the next job, apart from the repo's tools, so the reports it reads cross as an artifact.
+      # This step lists them before setup, while sonar-project.properties and git are still the checked-out ones.
+      - id: reports
+        name: List the coverage reports
+        if: ${{ hashFiles('sonar-project.properties') != '' }}
+        run: |
+          set -euo pipefail
+          paths=$(git show HEAD:sonar-project.properties | tr -d '\r' |
+            sed -n 's/^[[:space:]]*sonar\.[A-Za-z0-9.]*[Rr]eportPaths[[:space:]]*[=:][[:space:]]*//p' | tr ',' '\n' |
+            sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep -v '^$' || true)
+          # sonar-project.properties rides along, so the artifact's root is always the repo root.
+          { echo 'paths<<EOF'; echo sonar-project.properties; echo "$paths"; echo EOF; } >>"$GITHUB_OUTPUT"
 
       # Node 26's binary links libatomic, which the self-hosted runner's image lacks, so mise fails to install it.
       - name: Install libatomic1
@@ -51,14 +67,41 @@ jobs:
       - id: check
         run: mise run --continue-on-error check:ci
 
-      # The token check and the scan run after a red check:ci too, so SonarQube's quality gate on new code
-      # still judges a pull request in a repo below the coverage floor. A failed setup skips check:ci, and so both.
-      # A PR from a fork gets no secrets, so it skips both.
-      - id: token
-        name: Check the SonarQube token
-        if: >-
-          ${{ !cancelled() && steps.check.outcome != 'skipped' && hashFiles('sonar-project.properties') != ''
-          && (!github.event.pull_request || github.event.pull_request.head.repo.full_name == github.repository) }}
+      - name: Upload the coverage reports
+        if: ${{ !cancelled() && steps.check.outcome != 'skipped' && steps.reports.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: sonar-reports
+          path: ${{ steps.reports.outputs.paths }}
+          if-no-files-found: warn
+          retention-days: 1
+
+  # The SonarQube token lives only in this job, which runs none of the repo's tools: setup's third-party install
+  # scripts could otherwise reach it through GITHUB_ENV, GITHUB_PATH or a process left running.
+  sonar:
+    needs: ci
+    # The scan runs after a red check:ci too, so SonarQube's quality gate on new code still judges a pull request in a
+    # repo below the coverage floor. A failed setup lists no reports, and so skips it. A PR whose head is outside the
+    # repo gets no secrets, so it skips it too.
+    if: >-
+      ${{ !cancelled() && needs.ci.outputs.has-reports == 'true'
+      && (!github.event.pull_request || github.event.pull_request.head.repo.full_name == github.repository) }}
+    runs-on: ${{ github.event.repository.private && fromJSON('["self-hosted","swarm"]') || 'ubuntu-24.04' }}
+    concurrency:
+      group: sonar-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+      cancel-in-progress: true
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # SonarQube reads the history to tell new code from old.
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Check the SonarQube token
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
@@ -67,20 +110,40 @@ jobs:
             exit 1
           fi
 
+      # The artifact is data the repo's tools wrote. Only the files the committed sonar-project.properties names
+      # leave it.
+      - name: Download the coverage reports
+        uses: actions/download-artifact@v8
+        with:
+          name: sonar-reports
+          path: ${{ runner.temp }}/sonar-reports
+
+      - name: Put the coverage reports in place
+        env:
+          REPORTS: ${{ runner.temp }}/sonar-reports
+          PATHS: ${{ needs.ci.outputs.report-paths }}
+        run: |
+          set -euo pipefail
+          while IFS= read -r path; do
+            if [ "$path" = sonar-project.properties ] || [ ! -f "$REPORTS/$path" ]; then
+              continue
+            fi
+            mkdir -p "$(dirname "$path")"
+            cp "$REPORTS/$path" "$path"
+          done <<<"$PATHS"
+
       - id: sonar
         name: SonarQube scan
-        if: ${{ !cancelled() && steps.token.outcome == 'success' }}
-        uses: kk-forge-engineering/gh-actions/sonarqube-scan@v2
+        uses: kk-forge-engineering/gh-actions/sonarqube-scan@v4
         with:
           sonar-token: ${{ secrets.SONAR_TOKEN }}
           sonar-host-url: https://sq.kk-forge.com
 
       # This step names each failed condition, then the new issues and security hotspots at their file and line, so a
       # red gate reads without a SonarQube login. The quality gate action says only that the gate failed. The step sends
-      # the repo's token to `SONAR_HOST_URL`, never to the `serverUrl` in `report-task.txt`: the repo's own tools run
-      # before the scan and can write that file.
+      # the repo's token to `SONAR_HOST_URL` only, never to a URL read from a file.
       - name: Show why the quality gate failed
-        if: ${{ !cancelled() && steps.sonar.outcome == 'failure' && hashFiles('.scannerwork/report-task.txt') != '' }}
+        if: ${{ failure() && steps.sonar.outcome == 'failure' && hashFiles('.scannerwork/report-task.txt') != '' }}
         uses: actions/github-script@v9
         # The step pins host and token in its own env, which wins over a `GITHUB_ENV` the repo's tools could
         # have written.
