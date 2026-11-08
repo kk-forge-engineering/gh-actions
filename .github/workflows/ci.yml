@@ -23,9 +23,6 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
-    # The SonarQube steps send SONAR_TOKEN to this host alone.
-    env:
-      SONAR_HOST_URL: https://sq.kk-forge.com
     steps:
       - uses: actions/checkout@v7
         with:
@@ -68,7 +65,7 @@ jobs:
         uses: kk-forge-engineering/gh-actions/sonarqube-scan@v2
         with:
           sonar-token: ${{ secrets.SONAR_TOKEN }}
-          sonar-host-url: ${{ env.SONAR_HOST_URL }}
+          sonar-host-url: https://sq.kk-forge.com
 
       # The quality gate action says only that the gate failed. This step names each failed condition, then the new
       # issues and security hotspots at their file and line, read with the repo's own token, so a red gate is clear
@@ -77,7 +74,9 @@ jobs:
       - name: Show why the quality gate failed
         if: ${{ !cancelled() && steps.sonar.outcome == 'failure' && hashFiles('.scannerwork/report-task.txt') != '' }}
         uses: actions/github-script@v9
+        # A step's own env wins over GITHUB_ENV, which the repo's tools could have written.
         env:
+          SONAR_HOST_URL: https://sq.kk-forge.com
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         with:
           script: |
