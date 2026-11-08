@@ -41,7 +41,7 @@ runs:
               }
             : { 'sonar.branch.name': process.env.GITHUB_REF_NAME };
           params['sonar.projectVersion'] = commit;
-          // The host goes in too, so it holds whatever rank the scanner gives sonar-project.properties.
+          // The host goes in too, so a sonar.host.url in sonar-project.properties cannot override it.
           params['sonar.host.url'] = process.env.SONAR_HOST_URL;
           console.log('SonarQube parameters:', params);
           core.exportVariable('SONARQUBE_SCANNER_PARAMS', JSON.stringify(params));

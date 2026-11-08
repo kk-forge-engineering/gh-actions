@@ -51,7 +51,7 @@ jobs:
           paths=$(git show HEAD:sonar-project.properties | tr -d '\r' |
             sed -n 's/^[[:space:]]*sonar\.[A-Za-z0-9.]*[Rr]eportPaths[[:space:]]*[=:][[:space:]]*//p' | tr ',' '\n' |
             sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep -v '^$' || true)
-          # sonar-project.properties rides along, so the artifact's root is always the repo root.
+          # The upload adds sonar-project.properties, so the artifact's root is always the repo root.
           d=$(openssl rand -hex 16)
           { echo "paths<<$d"; echo sonar-project.properties; echo "$paths"; echo "$d"; } >>"$GITHUB_OUTPUT"
 
@@ -86,7 +86,7 @@ jobs:
       # reads.
       - name: Upload the type files
         if: ${{ !cancelled() && steps.upload.outcome == 'success' }}
-        # The type files only sharpen the scan, so a failed upload leaves check:ci's result as it is.
+        # The scan runs without the type files too, so a failed upload leaves check:ci's result as it is.
         continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
@@ -106,7 +106,7 @@ jobs:
   # scripts could otherwise reach it through GITHUB_ENV, GITHUB_PATH or a process left running.
   sonar:
     needs: ci
-    # A huge artifact must not hold the kk-forge runner for the default six hours.
+    # This limit stops a huge artifact from holding the kk-forge runner for GitHub's default six hours.
     timeout-minutes: 30
     # The scan runs after a red check:ci too, so SonarQube's quality gate on new code still judges a pull request in a
     # repo below the coverage floor. A failed setup skips check:ci and the report upload, and so the scan. A PR whose
@@ -129,7 +129,8 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
 
-      # SonarJS needs Node and may fall back to the scanner's own, which can link libatomic as Node 26 does.
+      # SonarJS runs its embedded Node, as this job installs none. Node links libatomic, which the self-hosted runner's
+      # image lacks.
       - name: Install libatomic1
         if: runner.os == 'Linux'
         run: ldconfig -p | grep -q libatomic.so.1 || { sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends libatomic1; }
