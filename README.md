@@ -1,6 +1,6 @@
 # GitHub actions
 
-Reusable GitHub workflows and actions. Pin them to the major tag, such as `@v3`. `v2` keeps Release image's earlier inputs.
+Reusable GitHub workflows and actions. Pin them to the major tag, such as `@v4`. `v3` keeps Release image's `latest` tag and digest references, and `v2` its earlier inputs.
 
 ## Workflows
 
@@ -12,24 +12,21 @@ Reusable GitHub workflows and actions. Pin them to the major tag, such as `@v3`.
       branches: ["**"]
   jobs:
     ci:
-      uses: kk-forge-engineering/gh-actions/.github/workflows/ci.yml@v3
+      uses: kk-forge-engineering/gh-actions/.github/workflows/ci.yml@v4
       permissions: { contents: read, pull-requests: read }
       secrets: { SONAR_TOKEN: "${{ secrets.SONAR_TOKEN }}" }
   ```
 
-- [Release image](/.github/workflows/release-image.yml) builds a package's images, pushes them to `dr.kk-forge.com` under the package's version, and publishes a GitHub Release `<tag-prefix>v<version>`. The Release body lists `dr.kk-forge.com/<name>@sha256:<digest>` for each image. When that tag already exists, the run ends green without a release, and warns when the tag points at another commit. A private repo builds on the self-hosted runner, a public one on a hosted runner. Its inputs:
-  - `images`, required: one `<name> <context> <Dockerfile>` per line, `<name>` being the image's repository in `dr.kk-forge.com`
-  - `version-task`, required: the caller's mise task that prints the version, `X.Y.Z`
-  - `tag-prefix`: goes before `v<version>`, such as `backend-` in a repo of several packages
-  - `dev`: releases `<version>-dev.<run number>` from any branch, where a stable release comes only from the default branch
-  - the secret `DOCKER_REGISTRY_TOKEN`: the token of the registry user named after the repo
+- [Release image](/.github/workflows/release-image.yml) builds a package's images, pushes them to `dr.kk-forge.com` under the package's version, and publishes a GitHub Release `<tag-prefix>v<version>`. The Release body lists `dr.kk-forge.com/<name>:<version>` for each image. When the git tag already exists, the run ends green without a release, and warns when the tag points at another commit. When an image's version tag is already in the registry, the run fails, so an image never changes under its version. A private repo builds on the self-hosted runner, a public one on a hosted runner. Each input's meaning is in the workflow's `inputs`. What the inputs leave out:
+  - A trial on the server is a dev release, from a caller job that runs on `workflow_dispatch` with `dev: true`.
+  - The secret `DOCKER_REGISTRY_TOKEN` is the token of the registry user named after the repo.
 
   The caller runs it as a second job of its CI, after `ci`, on the default branch:
   ```yaml
     release:
       needs: ci
       if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-      uses: kk-forge-engineering/gh-actions/.github/workflows/release-image.yml@v3
+      uses: kk-forge-engineering/gh-actions/.github/workflows/release-image.yml@v4
       permissions: { contents: write }
       with:
         version-task: version
