@@ -10,7 +10,7 @@ on:
         required: false
   push:
     branches: ["**"]
-  # A push analyses as its open PR. A PR opened after its push is analysed here, and later pushes stay on push.
+  # For a caller with the same trigger (README.md), a PR opened after its last push gets its SonarQube PR analysis.
   pull_request:
     types: [opened, reopened]
 
