@@ -6,7 +6,10 @@ const reportGate = require('./gate-report.js');
 
 const TOKEN = 'token-1';
 const PROJECT = 'demo';
-/** The fake serves at most this many items a page, whatever `ps` asks, so a list spans several pages. */
+/**
+ * The fake serves at most this many items a page and ignores `ps`.
+ * A list longer than this then spans several pages.
+ */
 const PAGE_SIZE = 10;
 const PR_TASK = { analysisId: 'analysis-1', componentKey: PROJECT, pullRequest: '48' };
 const CONDITION = 'new_violations is 25, the gate wants it not above 0';

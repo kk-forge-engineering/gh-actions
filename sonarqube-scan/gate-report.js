@@ -1,5 +1,6 @@
-// Explains a failed SonarQube quality gate in the GitHub step that runs it, so a red gate reads without a SonarQube
-// login. action.yml runs it with `actions/github-script`, and gate-report.test.js tests it: `mise run test`.
+// Explains a failed SonarQube quality gate in the GitHub step that runs it,
+// so a red gate reads without a SonarQube login. `action.yml` runs it with
+// `actions/github-script`, and `mise run test` runs `gate-report.test.js`.
 const { randomUUID } = require('node:crypto');
 
 /** GitHub turns only a step's first 10 errors into annotations. */
@@ -8,16 +9,17 @@ const ANNOTATION_LIMIT = 10;
 const SEARCH_LIMIT = 10000;
 const PAGE_SIZE = 100;
 
-// The repo's own tools write reports the scan imports, such as an ESLint report, so a path or message may hold a
-// line break or markup. Each finding keeps to one log line and shows in the job summary as plain text.
+// These helpers keep each finding on one log line and show it as plain text
+// in the job summary. A path or message can hold a line break or markup,
+// because the scan imports reports from the repo's own tools, such as ESLint.
 const oneLine = (text) => String(text).replace(/[\r\n]+/g, ' ');
 const escapeHtml = (text) => oneLine(text).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 const escapeMarkdown = (text) => escapeHtml(text).replace(/[\\`*_{}[\]()#+\-.!|~]/g, '\\$&');
 
 /**
- * Names each failed condition, then lists every new issue and security hotspot to review as
- * `path:line rule — message`, in the log and the job summary. The first ones also become annotations at their file
- * and line. `reportTask` is the scanner's `.scannerwork/report-task.txt`, and `token` goes to `host` only.
+ * Names each failed condition, then lists each new issue and hotspot to
+ * review as `path:line rule — message` in the log and the job summary, and
+ * annotates the first ones. `reportTask` is the scanner's report-task.txt.
  */
 module.exports = async function reportGate({ core, host, token, reportTask }) {
   const get = async (path, query) => {
@@ -59,7 +61,6 @@ module.exports = async function reportGate({ core, host, token, reportTask }) {
     core.warning(message);
     summary.addRaw(`\n${escapeMarkdown(message)}\n`);
   };
-  // The summary is written even when a search fails, so the failed conditions still reach it.
   try {
     await listFindings({ core, task, summary, warn, getAll, annotationCount: conditions.length });
   } finally {
@@ -67,15 +68,20 @@ module.exports = async function reportGate({ core, host, token, reportTask }) {
   }
 };
 
-/** Lists the new hotspots and issues of the task's analysis, and annotates the first ones. */
+/**
+ * Lists the new hotspots and issues of the task's analysis in the log and
+ * the job summary, and annotates the first ones.
+ */
 const listFindings = async ({ core, task, summary, warn, getAll, annotationCount }) => {
-  // The search reads all of a PR's issues, but only a branch's new code period. A PR analysis holds only the PR's
-  // code, so all its issues are new.
+  // The search reads all issues of a PR, but only the new code period of a
+  // branch. A PR analysis holds only the PR's changes, so all its issues are
+  // new.
   const scope = task.pullRequest
     ? { pullRequest: task.pullRequest }
     : { branch: task.branch, inNewCodePeriod: true };
-  // Hotspots are read first, so a token without Browse on the project ends in a warning. Without Browse, the hotspot
-  // search answers 403 and the issue search answers an empty list.
+  // The function reads hotspots first, so a token without Browse gets a
+  // warning. Without Browse, the hotspot search answers 403, but the issue
+  // search answers an empty list.
   let hotspots;
   try {
     hotspots = await getAll({
@@ -96,9 +102,13 @@ const listFindings = async ({ core, task, summary, warn, getAll, annotationCount
     query: { components: task.componentKey, issueStatuses: 'OPEN,CONFIRMED', ...scope },
   });
 
-  /** Returns the path from the repo root, or the project key for a finding on the whole project. */
+  /**
+   * Returns the path from the repo root, or the project key for a finding on
+   * the whole project.
+   */
   const pathOf = (component) => component.slice(task.componentKey.length + 1) || component;
-  // Hotspots come first, so they get GitHub's first annotations. A project has few hotspots and may have many issues.
+  // Hotspots come first, so they get GitHub's first annotations. A project has
+  // few hotspots, but its many issues could use up all the annotations.
   const groups = [
     {
       heading: 'security hotspots to review',
@@ -114,8 +124,9 @@ const listFindings = async ({ core, task, summary, warn, getAll, annotationCount
         { title: `${title} ${finding.rule}`, file: pathOf(finding.component), startLine: finding.line });
     }
   }
-  // The runner reads a log line that starts with `::` as a command. Stopping commands keeps a path or message from
-  // adding annotations of its own.
+  // The function stops workflow commands while it logs findings, so a path or
+  // message adds no annotation of its own. The runner reads a log line that
+  // starts with `::` as a command.
   const resume = randomUUID();
   core.info(`::stop-commands::${resume}`);
   for (const { heading, findings } of groups) {
