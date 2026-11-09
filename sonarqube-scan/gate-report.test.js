@@ -9,6 +9,8 @@ const PROJECT = 'demo';
 // The fake serves at most this many items a page, whatever `ps` asks, so a list spans several pages.
 const PAGE_SIZE = 10;
 
+const HOTSPOT = { component: `${PROJECT}:src/auth.ts`, line: 7, ruleKey: 'typescript:S2068', message: 'Review this password' };
+
 const issue = (n) => ({
   component: `${PROJECT}:src/file-${n}.ts`,
   line: n,
@@ -102,10 +104,7 @@ const run = async (sonarQube) => {
 test('lists every hotspot and issue across all pages in the log and the job summary', async () => {
   const issues = Array.from({ length: 23 }, (_, i) => issue(i + 1));
   issues.push({ component: `${PROJECT}:src/ключ.ts`, rule: 'typescript:S100', message: 'Rename <T> & "ключ"' });
-  const hotspots = [
-    { component: `${PROJECT}:src/auth.ts`, line: 7, ruleKey: 'typescript:S2068', message: 'Review this password' },
-  ];
-  const sonarQube = await startSonarQube({ hotspots, issues });
+  const sonarQube = await startSonarQube({ hotspots: [HOTSPOT], issues });
 
   const core = await run(sonarQube);
 
@@ -130,11 +129,8 @@ test('lists every hotspot and issue across all pages in the log and the job summ
 
 test('annotates the failed conditions, then hotspots and issues, up to 10 errors with file and line', async () => {
   const issues = Array.from({ length: 23 }, (_, i) => issue(i + 1));
-  const hotspots = [
-    { component: `${PROJECT}:src/auth.ts`, line: 7, ruleKey: 'typescript:S2068', message: 'Review this password' },
-  ];
 
-  const core = await run(await startSonarQube({ hotspots, issues }));
+  const core = await run(await startSonarQube({ hotspots: [HOTSPOT], issues }));
 
   assert.equal(core.errors.length, 10);
   assert.equal(core.errors[0].message, 'new_violations is 25, the gate wants it not above 0');
