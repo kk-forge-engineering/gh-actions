@@ -26,8 +26,10 @@ const newCondition = (metricKey) =>
   ({ status: 'ERROR', metricKey, comparator: 'GT', actualValue: '25', errorThreshold: '0' });
 
 /**
- * Starts a fake SonarQube with these hotspots and issues, and returns its URL and the requests it answered.
- * `status` overrides the answer to a path, and `hiddenIssues` counts issues the total holds but no page serves.
+ * Starts a fake SonarQube that serves these hotspots and issues.
+ * Returns its URL, the requests it answered, and a function that stops it.
+ * `status` overrides the HTTP status for a path. `hiddenIssues` counts issues
+ * that the total holds but no page serves.
  */
 const startSonarQube = async ({
   task = PR_TASK, failedConditions = 1, hotspots = [], issues = [], hiddenIssues = 0, status = {},
@@ -103,7 +105,10 @@ const newFakeCore = () => {
   return core;
 };
 
-/** Runs the script on `core` against a fake SonarQube with these options, and returns the requests it answered. */
+/**
+ * Runs the script on `core` against a fake SonarQube with these options.
+ * Returns the requests that the fake answered.
+ */
 const run = async ({ core, ...options }) => {
   const sonarQube = await startSonarQube(options);
   try {

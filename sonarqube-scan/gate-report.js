@@ -28,7 +28,7 @@ const newSonarQube = ({ host, token }) => {
     }
     return response.json();
   };
-  /** Reads every page of a search, and counts the items past the search limit. */
+  /** Returns the items up to the search limit, and the count of items left. */
   const getAll = async ({ path, key, query }) => {
     const items = [];
     for (let page = 1; ; page += 1) {
