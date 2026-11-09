@@ -147,7 +147,9 @@ test('lists every hotspot and issue across all pages in the log and the job summ
   ]) {
     assert.ok(core.summary.written.includes(`${line}\n`), `the job summary lacks "${line}"`);
   }
-  for (const url of requests.filter((request) => request.pathname.endsWith('/search'))) {
+  const searches = requests.filter((url) => url.pathname.endsWith('/search'));
+  assert.equal(searches.length, 4);
+  for (const url of searches) {
     assert.equal(url.searchParams.get('pullRequest'), '48');
   }
   assert.deepEqual(core.warnings, []);

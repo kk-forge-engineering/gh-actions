@@ -79,12 +79,8 @@ module.exports = async function reportGate({ core, host, token, reportTask }) {
   conditions.forEach((condition) => core.error(condition));
   const summary = core.summary.addRaw('### Quality gate failed\n\n')
     .addRaw(conditions.map((condition) => `- ${condition}\n`).join(''));
-  const warn = (message) => {
-    core.warning(message);
-    summary.addRaw(`\n${escapeMarkdown(message)}\n`);
-  };
   try {
-    await listFindings({ core, sonarQube, task, summary, warn, annotationCount: conditions.length });
+    await listFindings({ core, sonarQube, task, summary, usedAnnotations: conditions.length });
   } finally {
     await summary.write();
   }
@@ -94,7 +90,11 @@ module.exports = async function reportGate({ core, host, token, reportTask }) {
  * Lists the new hotspots and issues of the task's analysis in the log and
  * the job summary, and annotates the first ones.
  */
-const listFindings = async ({ core, sonarQube, task, summary, warn, annotationCount }) => {
+const listFindings = async ({ core, sonarQube, task, summary, usedAnnotations }) => {
+  const warn = (message) => {
+    core.warning(message);
+    summary.addRaw(`\n${escapeMarkdown(message)}\n`);
+  };
   // The search reads all issues of a PR, but only the new code period of a
   // branch. A PR analysis holds only the PR's changes, so all its issues are
   // new.
@@ -141,7 +141,7 @@ const listFindings = async ({ core, sonarQube, task, summary, warn, annotationCo
   ].filter((group) => group.findings.length > 0);
   const annotated = groups
     .flatMap(({ title, findings }) => findings.map((finding) => ({ ...finding, title: `${title} ${finding.rule}` })))
-    .slice(0, Math.max(0, ANNOTATION_LIMIT - annotationCount));
+    .slice(0, Math.max(0, ANNOTATION_LIMIT - usedAnnotations));
   for (const finding of annotated) {
     core.error(finding.message, { title: finding.title, file: pathOf(finding.component), startLine: finding.line });
   }
