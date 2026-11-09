@@ -6,25 +6,30 @@ const reportGate = require('./gate-report.js');
 
 const TOKEN = 'token-1';
 const PROJECT = 'demo';
-// The fake serves at most this many items a page, whatever `ps` asks, so a list spans several pages.
+/** The fake serves at most this many items a page, whatever `ps` asks, so a list spans several pages. */
 const PAGE_SIZE = 10;
-
+const PR_TASK = { analysisId: 'analysis-1', componentKey: PROJECT, pullRequest: '48' };
+const CONDITION = 'new_violations is 25, the gate wants it not above 0';
 const HOTSPOT = { component: `${PROJECT}:src/auth.ts`, line: 7, ruleKey: 'typescript:S2068', message: 'Review this password' };
 
-const issue = (n) => ({
+const newIssue = (n) => ({
   component: `${PROJECT}:src/file-${n}.ts`,
   line: n,
   rule: `typescript:S${n}`,
   message: `Issue ${n}`,
 });
+const newIssues = (count) => Array.from({ length: count }, (_, i) => newIssue(i + 1));
 
-/** Starts a fake SonarQube with these hotspots and issues, and returns its URL and the queries it answered. */
-const startSonarQube = async ({ hotspots, issues, isForbidden = false }) => {
+/**
+ * Starts a fake SonarQube with these hotspots and issues, and returns its URL and the queries it answered.
+ * `status` overrides the answer to a path, and `hiddenIssues` counts issues the total holds but no page serves.
+ */
+const startSonarQube = async ({ task = PR_TASK, hotspots = [], issues = [], hiddenIssues = 0, status = {} }) => {
   const queries = [];
-  const page = (items, query) => {
+  const page = (items, query, total = items.length) => {
     const index = Number(query.get('p') ?? 1);
     return {
-      paging: { pageIndex: index, pageSize: PAGE_SIZE, total: items.length },
+      paging: { pageIndex: index, pageSize: PAGE_SIZE, total },
       items: items.slice((index - 1) * PAGE_SIZE, index * PAGE_SIZE),
     };
   };
@@ -32,7 +37,7 @@ const startSonarQube = async ({ hotspots, issues, isForbidden = false }) => {
     const query = url.searchParams;
     switch (url.pathname) {
       case '/api/ce/task':
-        return { task: { analysisId: 'analysis-1', componentKey: PROJECT, pullRequest: '48' } };
+        return { task };
       case '/api/qualitygates/project_status':
         return {
           projectStatus: {
@@ -47,7 +52,7 @@ const startSonarQube = async ({ hotspots, issues, isForbidden = false }) => {
         return { paging, hotspots: items };
       }
       case '/api/issues/search': {
-        const { paging, items } = page(issues, query);
+        const { paging, items } = page(issues, query, issues.length + hiddenIssues);
         return { paging, issues: items };
       }
       default:
@@ -58,8 +63,7 @@ const startSonarQube = async ({ hotspots, issues, isForbidden = false }) => {
     const url = new URL(request.url, 'http://localhost');
     queries.push(url);
     const body = request.headers.authorization === `Bearer ${TOKEN}` ? answer(url) : undefined;
-    const status = isForbidden && url.pathname === '/api/hotspots/search' ? 403 : body ? 200 : 401;
-    response.writeHead(status, { 'content-type': 'application/json' });
+    response.writeHead(status[url.pathname] ?? (body ? 200 : 401), { 'content-type': 'application/json' });
     response.end(JSON.stringify(body ?? {}));
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -67,7 +71,7 @@ const startSonarQube = async ({ hotspots, issues, isForbidden = false }) => {
 };
 
 /** Records what the script sends to the step, as `@actions/core` would show it. */
-const fakeCore = () => {
+const newFakeCore = () => {
   const core = {
     errors: [],
     warnings: [],
@@ -91,49 +95,55 @@ const fakeCore = () => {
   return core;
 };
 
-const run = async (sonarQube) => {
-  const core = fakeCore();
+/** Runs the script against a fake SonarQube with these options, and returns the fake core and the queries. */
+const run = async (options) => {
+  const sonarQube = await startSonarQube(options);
+  const core = newFakeCore();
   try {
     await reportGate({ core, host: sonarQube.host, token: TOKEN, reportTask: 'ceTaskId=task-1\n' });
+    return { core, queries: sonarQube.queries };
+  } catch (error) {
+    error.core = core;
+    throw error;
   } finally {
     sonarQube.close();
   }
-  return core;
 };
 
 test('lists every hotspot and issue across all pages in the log and the job summary', async () => {
-  const issues = Array.from({ length: 23 }, (_, i) => issue(i + 1));
+  const issues = newIssues(23);
   issues.push({ component: `${PROJECT}:src/ключ.ts`, rule: 'typescript:S100', message: 'Rename <T> & "ключ"' });
-  const sonarQube = await startSonarQube({ hotspots: [HOTSPOT], issues });
 
-  const core = await run(sonarQube);
+  const { core, queries } = await run({ hotspots: [HOTSPOT], issues });
 
   const lines = [
     'src/auth.ts:7 typescript:S2068 — Review this password',
-    ...issues.slice(0, 23).map((it) => `src/file-${it.line}.ts:${it.line} ${it.rule} — Issue ${it.line}`),
+    ...issues.slice(0, 23).map((issue) => `src/file-${issue.line}.ts:${issue.line} ${issue.rule} — Issue ${issue.line}`),
     'src/ключ.ts typescript:S100 — Rename <T> & "ключ"',
+  ];
+  const summaryLines = [
+    '- <code>src/auth.ts:7</code> typescript:S2068 — Review this password',
+    ...issues.slice(0, 23)
+      .map((issue) => `- <code>src/file-${issue.line}.ts:${issue.line}</code> ${issue.rule} — Issue ${issue.line}`),
+    '- <code>src/ключ.ts</code> typescript:S100 — Rename &lt;T&gt; &amp; "ключ"',
   ];
   for (const line of lines) {
     assert.ok(core.log.includes(line), `the log lacks "${line}"`);
-    const markdown = line.replace(/^(\S+) /, '`$1` ')
-      .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
-    assert.ok(core.summary.written.includes(markdown), `the job summary lacks "${markdown}"`);
   }
-  assert.ok(core.summary.written.includes('new_violations is 25, the gate wants it not above 0'));
-  assert.ok(sonarQube.queries.filter((url) => url.pathname === '/api/issues/search').length >= 3);
-  for (const url of sonarQube.queries.filter((it) => it.pathname.endsWith('/search'))) {
+  for (const line of [`- ${CONDITION}`, ...summaryLines]) {
+    assert.ok(core.summary.written.includes(`${line}\n`), `the job summary lacks "${line}"`);
+  }
+  for (const url of queries.filter((query) => query.pathname.endsWith('/search'))) {
     assert.equal(url.searchParams.get('pullRequest'), '48');
   }
   assert.deepEqual(core.warnings, []);
 });
 
 test('annotates the failed conditions, then hotspots and issues, up to 10 errors with file and line', async () => {
-  const issues = Array.from({ length: 23 }, (_, i) => issue(i + 1));
-
-  const core = await run(await startSonarQube({ hotspots: [HOTSPOT], issues }));
+  const { core } = await run({ hotspots: [HOTSPOT], issues: newIssues(23) });
 
   assert.equal(core.errors.length, 10);
-  assert.equal(core.errors[0].message, 'new_violations is 25, the gate wants it not above 0');
+  assert.equal(core.errors[0].message, CONDITION);
   assert.deepEqual(
     core.errors.slice(1, 3).map(({ file, startLine, title }) => ({ file, startLine, title })),
     [
@@ -143,13 +153,72 @@ test('annotates the failed conditions, then hotspots and issues, up to 10 errors
   );
 });
 
-test('warns and lists only the conditions when the token may not browse the project', async () => {
-  const core = await run(await startSonarQube({ hotspots: [], issues: [issue(1)], isForbidden: true }));
+test('reads a branch analysis in its new code period', async () => {
+  const { core, queries } = await run({
+    task: { analysisId: 'analysis-1', componentKey: PROJECT, branch: 'main' },
+    issues: newIssues(1),
+  });
 
-  assert.deepEqual(core.warnings,
-    [`The SonarQube token may not browse ${PROJECT}, so its new issues and hotspots stay in SonarQube`]);
+  const searches = queries.filter((query) => query.pathname.endsWith('/search'));
+  assert.equal(searches.length, 2);
+  for (const url of searches) {
+    assert.equal(url.searchParams.get('branch'), 'main');
+    assert.equal(url.searchParams.get('inNewCodePeriod'), 'true');
+    assert.equal(url.searchParams.get('pullRequest'), null);
+  }
+  assert.ok(core.log.includes('src/file-1.ts:1 typescript:S1 — Issue 1'));
+});
+
+test('warns about the findings past what SonarQube serves, in the log and the job summary', async () => {
+  const { core } = await run({ issues: newIssues(3), hiddenIssues: 5 });
+
+  assert.deepEqual(core.warnings, ['5 more new issues and hotspots are in SonarQube']);
+  assert.ok(core.summary.written.includes('5 more new issues and hotspots are in SonarQube'));
+});
+
+test('warns and lists only the conditions when the token may not browse the project', async () => {
+  const { core } = await run({ issues: [newIssue(1)], status: { '/api/hotspots/search': 403 } });
+
+  const warning = `The SonarQube token may not browse ${PROJECT}, so its new issues and hotspots stay in SonarQube`;
+  assert.deepEqual(core.warnings, [warning]);
   assert.equal(core.errors.length, 1);
-  assert.ok(core.summary.written.includes('new_violations is 25'));
-  assert.ok(core.summary.written.includes(core.warnings[0]), 'the job summary lacks the warning');
+  assert.ok(core.summary.written.includes(`- ${CONDITION}`));
+  assert.ok(core.summary.written.includes(warning));
   assert.ok(!core.log.some((line) => line.includes('Issue 1')));
+});
+
+test('writes the failed conditions to the job summary when a search fails', async () => {
+  const failed = run({ issues: [newIssue(1)], status: { '/api/issues/search': 500 } });
+
+  const error = await failed.then(() => assert.fail('the script did not throw'), (thrown) => thrown);
+  assert.match(error.message, /SonarQube answered 500 to \/api\/issues\/search/);
+  assert.ok(error.core.summary.written.includes(`- ${CONDITION}`));
+});
+
+test('warns when the analysis task has no analysis', async () => {
+  const { core } = await run({ task: { componentKey: PROJECT, status: 'FAILED' } });
+
+  assert.deepEqual(core.warnings, ['The analysis task is FAILED, so it has no quality gate result to read']);
+  assert.deepEqual(core.errors, []);
+});
+
+test('keeps a path or message with a line break and markup to one inert line', async () => {
+  const issue = {
+    component: `${PROJECT}:src/a\`b.ts`,
+    line: 3,
+    rule: 'eslint:x',
+    message: 'x\n::error file=src/auth.ts::Approved\n### Gate passed [login](https://evil.example)',
+  };
+
+  const { core } = await run({ issues: [issue] });
+
+  const start = core.log.findIndex((line) => line.startsWith('::stop-commands::'));
+  const resume = core.log[start].slice('::stop-commands::'.length);
+  const end = core.log.indexOf(`::${resume}::`);
+  const listed = core.log.findIndex((line) => line.startsWith('src/a`b.ts:3'));
+  assert.ok(start < listed && listed < end, 'the finding is not listed while commands are stopped');
+  assert.equal(core.log[listed],
+    'src/a`b.ts:3 eslint:x — x ::error file=src/auth.ts::Approved ### Gate passed [login](https://evil.example)');
+  assert.ok(core.summary.written.includes('- <code>src/a`b.ts:3</code> eslint:x — x ::error file=src/auth\\.ts::Approved ' +
+    '\\#\\#\\# Gate passed \\[login\\]\\(https://evil\\.example\\)\n'));
 });

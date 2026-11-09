@@ -1,6 +1,6 @@
 # SonarQube scan
 
-Runs SonarQube analysis, then fails the job when the Quality Gate is red. A red gate lists why in the step's log and the job summary: each failed condition, then every new issue and security hotspot to review as `path:line rule — message`. GitHub annotates the first 10 at their file and line. The action reads them with `sonar-token`.
+Runs SonarQube analysis, then fails the job when the Quality Gate is red. On a red gate, the action lists why in the step's log and the job summary: each failed condition, then every new issue and security hotspot to review as `path:line rule — message`. The failed conditions and the first findings also become annotations, up to GitHub's 10 a step, each finding at its file and line. To list the findings, `sonar-token` needs Browse on the project.
 
 ## Requirements
 

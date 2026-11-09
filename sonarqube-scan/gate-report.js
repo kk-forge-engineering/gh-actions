@@ -1,13 +1,18 @@
 // Explains a failed SonarQube quality gate in the GitHub step that runs it, so a red gate reads without a SonarQube
 // login. action.yml runs it with `actions/github-script`, and gate-report.test.js tests it: `mise run test`.
+const { randomUUID } = require('node:crypto');
 
-// GitHub turns only a step's first 10 errors into annotations.
+/** GitHub turns only a step's first 10 errors into annotations. */
 const ANNOTATION_LIMIT = 10;
-// The search APIs refuse a page past their 10,000th result.
+/** The search APIs refuse a page past their 10,000th result. */
 const SEARCH_LIMIT = 10000;
-const PAGE_SIZE = 500;
+const PAGE_SIZE = 100;
 
-const escapeHtml = (text) => text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+// The repo's own tools write reports the scan imports, such as an ESLint report, so a path or message may hold a
+// line break or markup. Each finding keeps to one log line and shows in the job summary as plain text.
+const oneLine = (text) => String(text).replace(/[\r\n]+/g, ' ');
+const escapeHtml = (text) => oneLine(text).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+const escapeMarkdown = (text) => escapeHtml(text).replace(/[\\`*_{}[\]()#+\-.!|~]/g, '\\$&');
 
 /**
  * Names each failed condition, then lists every new issue and security hotspot to review as
@@ -15,25 +20,19 @@ const escapeHtml = (text) => text.replaceAll('&', '&amp;').replaceAll('<', '&lt;
  * and line. `reportTask` is the scanner's `.scannerwork/report-task.txt`, and `token` goes to `host` only.
  */
 module.exports = async function reportGate({ core, host, token, reportTask }) {
-  const get = async (path, query, { isForbiddenOk = false } = {}) => {
+  const get = async (path, query) => {
     const response = await fetch(`${host}${path}?${new URLSearchParams(query)}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
-    if (isForbiddenOk && response.status === 403) {
-      return null;
-    }
     if (!response.ok) {
-      throw new Error(`SonarQube answered ${response.status} to ${path}`);
+      throw Object.assign(new Error(`SonarQube answered ${response.status} to ${path}`), { status: response.status });
     }
     return response.json();
   };
-  const getAll = async (path, key, query, options) => {
+  const getAll = async ({ path, key, query }) => {
     const items = [];
     for (let page = 1; ; page += 1) {
-      const body = await get(path, { ...query, ps: PAGE_SIZE, p: page }, options);
-      if (!body) {
-        return null;
-      }
+      const body = await get(path, { ...query, ps: PAGE_SIZE, p: page });
       items.push(...body[key]);
       const total = body.paging.total;
       if (body[key].length === 0 || items.length >= Math.min(total, SEARCH_LIMIT)) {
@@ -58,58 +57,81 @@ module.exports = async function reportGate({ core, host, token, reportTask }) {
     .addRaw(conditions.map((condition) => `- ${condition}\n`).join(''));
   const warn = (message) => {
     core.warning(message);
-    summary.addRaw(`\n${escapeHtml(message)}\n`);
+    summary.addRaw(`\n${escapeMarkdown(message)}\n`);
   };
+  // The summary is written even when a search fails, so the failed conditions still reach it.
+  try {
+    await listFindings({ core, task, summary, warn, getAll, annotationCount: conditions.length });
+  } finally {
+    await summary.write();
+  }
+};
 
-  // A PR analysis holds only the PR's code, so all its issues are new. A branch's new issues are those in its new
-  // code period.
+/** Lists the new hotspots and issues of the task's analysis, and annotates the first ones. */
+const listFindings = async ({ core, task, summary, warn, getAll, annotationCount }) => {
+  // The search reads all of a PR's issues, but only a branch's new code period. A PR analysis holds only the PR's
+  // code, so all its issues are new.
   const scope = task.pullRequest
     ? { pullRequest: task.pullRequest }
     : { branch: task.branch, inNewCodePeriod: true };
-  // Without Browse on the project, hotspots answer 403 while issues answer an empty list, so hotspots are read first.
-  const hotspots = await getAll('/api/hotspots/search', 'hotspots',
-    { projectKey: task.componentKey, status: 'TO_REVIEW', ...scope }, { isForbiddenOk: true });
-  if (!hotspots) {
-    warn(`The SonarQube token may not browse ${task.componentKey}, ` +
-      'so its new issues and hotspots stay in SonarQube');
-    await summary.write();
+  // Hotspots are read first, so a token without Browse on the project ends in a warning. Without Browse, the hotspot
+  // search answers 403 and the issue search answers an empty list.
+  let hotspots;
+  try {
+    hotspots = await getAll({
+      path: '/api/hotspots/search',
+      key: 'hotspots',
+      query: { projectKey: task.componentKey, status: 'TO_REVIEW', ...scope },
+    });
+  } catch (error) {
+    if (error.status !== 403) {
+      throw error;
+    }
+    warn(`The SonarQube token may not browse ${task.componentKey}, so its new issues and hotspots stay in SonarQube`);
     return;
   }
-  const issues = await getAll('/api/issues/search', 'issues',
-    { components: task.componentKey, issueStatuses: 'OPEN,CONFIRMED', ...scope });
+  const issues = await getAll({
+    path: '/api/issues/search',
+    key: 'issues',
+    query: { components: task.componentKey, issueStatuses: 'OPEN,CONFIRMED', ...scope },
+  });
 
-  // A component key is <project key>:<path from the project's base directory, the repo root here>.
-  const file = (component) => component.slice(task.componentKey.length + 1) || component;
+  /** Returns the path from the repo root, or the project key for a finding on the whole project. */
+  const pathOf = (component) => component.slice(task.componentKey.length + 1) || component;
+  // Hotspots come first, so they get GitHub's first annotations. A project has few hotspots and may have many issues.
   const groups = [
     {
       heading: 'security hotspots to review',
       title: 'New hotspot',
-      findings: hotspots.items.map((it) => ({ ...it, rule: it.ruleKey })),
+      findings: hotspots.items.map((hotspot) => ({ ...hotspot, rule: hotspot.ruleKey })),
     },
     { heading: 'new issues', title: 'New issue', findings: issues.items },
-  ];
-  // Hotspots are few, so they come before issues within GitHub's first annotations.
-  let annotations = conditions.length;
-  for (const { heading, title, findings } of groups) {
-    if (findings.length === 0) {
-      continue;
+  ].filter((group) => group.findings.length > 0);
+  for (const { title, findings } of groups) {
+    for (const finding of findings.slice(0, ANNOTATION_LIMIT - annotationCount)) {
+      annotationCount += 1;
+      core.error(finding.message,
+        { title: `${title} ${finding.rule}`, file: pathOf(finding.component), startLine: finding.line });
     }
+  }
+  // The runner reads a log line that starts with `::` as a command. Stopping commands keeps a path or message from
+  // adding annotations of its own.
+  const resume = randomUUID();
+  core.info(`::stop-commands::${resume}`);
+  for (const { heading, findings } of groups) {
     core.info(`${findings.length} ${heading}:`);
     summary.addRaw(`\n#### ${findings.length} ${heading}\n\n`);
     for (const finding of findings) {
-      const path = file(finding.component);
+      const path = pathOf(finding.component);
       const where = finding.line ? `${path}:${finding.line}` : path;
-      core.info(`${where} ${finding.rule} — ${finding.message}`);
-      summary.addRaw(`- \`${where}\` ${finding.rule} — ${escapeHtml(finding.message)}\n`);
-      if (annotations < ANNOTATION_LIMIT) {
-        annotations += 1;
-        core.error(finding.message, { title: `${title} ${finding.rule}`, file: path, startLine: finding.line });
-      }
+      core.info(oneLine(`${where} ${finding.rule} — ${finding.message}`));
+      summary.addRaw(`- <code>${escapeHtml(where)}</code> ${escapeMarkdown(finding.rule)} — ` +
+        `${escapeMarkdown(finding.message)}\n`);
     }
   }
+  core.info(`::${resume}::`);
   const left = hotspots.left + issues.left;
   if (left > 0) {
     warn(`${left} more new issues and hotspots are in SonarQube`);
   }
-  await summary.write();
 };
