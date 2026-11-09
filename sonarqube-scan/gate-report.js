@@ -56,6 +56,10 @@ module.exports = async function reportGate({ core, host, token, reportTask }) {
   conditions.forEach((condition) => core.error(condition));
   const summary = core.summary.addRaw('### Quality gate failed\n\n')
     .addRaw(conditions.map((condition) => `- ${condition}\n`).join(''));
+  const warn = (message) => {
+    core.warning(message);
+    summary.addRaw(`\n${escapeHtml(message)}\n`);
+  };
 
   // A PR analysis holds only the PR's code, so all its issues are new. A branch's new issues are those in its new
   // code period.
@@ -66,7 +70,7 @@ module.exports = async function reportGate({ core, host, token, reportTask }) {
   const hotspots = await getAll('/api/hotspots/search', 'hotspots',
     { projectKey: task.componentKey, status: 'TO_REVIEW', ...scope }, { isForbiddenOk: true });
   if (!hotspots) {
-    core.warning(`The SonarQube token may not browse ${task.componentKey}, ` +
+    warn(`The SonarQube token may not browse ${task.componentKey}, ` +
       'so its new issues and hotspots stay in SonarQube');
     await summary.write();
     return;
@@ -105,7 +109,7 @@ module.exports = async function reportGate({ core, host, token, reportTask }) {
   }
   const left = hotspots.left + issues.left;
   if (left > 0) {
-    core.warning(`${left} more new issues and hotspots are in SonarQube`);
+    warn(`${left} more new issues and hotspots are in SonarQube`);
   }
   await summary.write();
 };

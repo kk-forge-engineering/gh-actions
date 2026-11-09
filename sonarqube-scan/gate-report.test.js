@@ -154,5 +154,6 @@ test('warns and lists only the conditions when the token may not browse the proj
     [`The SonarQube token may not browse ${PROJECT}, so its new issues and hotspots stay in SonarQube`]);
   assert.equal(core.errors.length, 1);
   assert.ok(core.summary.written.includes('new_violations is 25'));
+  assert.ok(core.summary.written.includes(core.warnings[0]), 'the job summary lacks the warning');
   assert.ok(!core.log.some((line) => line.includes('Issue 1')));
 });
