@@ -110,10 +110,9 @@ jobs:
     timeout-minutes: 30
     # The scan runs after a red check:ci too, so SonarQube's quality gate on new code still judges a pull request in a
     # repo below the coverage floor. A failed setup skips check:ci and the report upload, and so the scan. A PR whose
-    # head is outside the repo gets no secrets, so it skips the scan too.
-    if: >-
-      ${{ !cancelled() && needs.ci.result != 'cancelled' && needs.ci.outputs.has-reports == 'true'
-      && (!github.event.pull_request || github.event.pull_request.head.repo.full_name == github.repository) }}
+    # head is outside the repo gets no secrets, so it skips the scan too. The condition stays on one line: GitHub missed
+    # `!cancelled()` in a folded one and skipped the scan after every red check:ci.
+    if: ${{ !cancelled() && needs.ci.result != 'cancelled' && needs.ci.outputs.has-reports == 'true' && (!github.event.pull_request || github.event.pull_request.head.repo.full_name == github.repository) }}
     runs-on: ${{ github.event.repository.private && fromJSON('["self-hosted","swarm"]') || 'ubuntu-24.04' }}
     concurrency:
       group: sonar-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
