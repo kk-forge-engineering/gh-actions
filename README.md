@@ -45,4 +45,4 @@ project-orchestration deploys the references a Release lists ([Release and deplo
 
 ## Checks
 
-`mise run check` runs actionlint, which also runs shellcheck over every `run:` script. The CI workflow runs it on every push to this repo.
+`mise run check` runs actionlint, which also runs shellcheck over every `run:` script, and the tests of [gate-report.js](/sonarqube-scan/gate-report.js) against a fake SonarQube. The CI workflow runs it on every push to this repo.

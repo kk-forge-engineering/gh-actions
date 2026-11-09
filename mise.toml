@@ -1,6 +1,8 @@
 [tools]
 actionlint = "1"
 shellcheck = "0"
+# The Node that actions/github-script@v9 runs gate-report.js on.
+node = "24"
 
 [tasks.setup]
 description = "Install every dependency (none here)"
@@ -11,10 +13,14 @@ run = "true"
 description = "Every linter"
 run = "actionlint"
 
+[tasks.test]
+description = "Every test"
+run = "node --test"
+
 [tasks.check]
 description = "Everything that must be green before a commit"
-depends = ["lint"]
+depends = ["lint", "test"]
 
 [tasks."check:ci"]
 description = "check, as CI runs it"
-depends = ["lint"]
+depends = ["lint", "test"]

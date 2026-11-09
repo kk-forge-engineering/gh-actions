@@ -1,6 +1,6 @@
 # SonarQube scan
 
-Runs SonarQube analysis, then fails the job when the Quality Gate is red.
+Runs SonarQube analysis, then fails the job when the Quality Gate is red. A red gate lists why in the step's log and the job summary: each failed condition, then every new issue and security hotspot to review as `path:line rule — message`. GitHub annotates the first 10 at their file and line. The action reads them with `sonar-token`.
 
 ## Requirements
 
@@ -37,4 +37,4 @@ sonar.coverage.exclusions=packages/backend/src/migrations/*,packages/backend/src
 
 ## Full example
 
-The [CI workflow](/.github/workflows/ci.yml) runs this action in a job of its own, after the repo's `check:ci` in another job. When the quality gate fails, the workflow lists the failed conditions, then the new issues and security hotspots at their file and line. It reads them with the repo's `SONAR_TOKEN`. Its caller is in the [root README](/README.md#workflows).
+The [CI workflow](/.github/workflows/ci.yml) runs this action in a job of its own, after the repo's `check:ci` in another job. It passes the repo's `SONAR_TOKEN`. Its caller is in the [root README](/README.md#workflows).

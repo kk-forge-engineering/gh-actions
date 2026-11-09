@@ -60,8 +60,28 @@ runs:
         SONAR_HOST_URL: ${{ inputs.sonar-host-url }}
 
     # A red Quality Gate fails this step, so the commit shows a failed check.
-    - name: SonarQube quality gate
+    - id: gate
+      name: SonarQube quality gate
       uses: SonarSource/sonarqube-quality-gate-action@v1
       env:
         SONAR_TOKEN: ${{ inputs.sonar-token }}
         SONAR_HOST_URL: ${{ inputs.sonar-host-url }}
+
+    # The quality gate action says only that the gate failed. This step lists why in the log, the job summary and
+    # annotations, so a red gate reads without a SonarQube login.
+    - name: Show why the quality gate failed
+      if: ${{ failure() && steps.gate.outcome == 'failure' && hashFiles('.scannerwork/report-task.txt') != '' }}
+      uses: actions/github-script@v9
+      env:
+        # Inside github-script, GITHUB_ACTION_PATH names github-script's own directory, not this action's.
+        ACTION_PATH: ${{ github.action_path }}
+        SONAR_HOST_URL: ${{ inputs.sonar-host-url }}
+        SONAR_TOKEN: ${{ inputs.sonar-token }}
+      with:
+        script: |
+          await require(`${process.env.ACTION_PATH}/gate-report.js`)({
+            core,
+            host: process.env.SONAR_HOST_URL,
+            token: process.env.SONAR_TOKEN,
+            reportTask: require('fs').readFileSync('.scannerwork/report-task.txt', 'utf8'),
+          });
