@@ -13,15 +13,12 @@ const PAGE_SIZE = 100;
 // in the job summary. A path or message can hold a line break or markup,
 // because the scan imports reports from the repo's own tools, such as ESLint.
 const oneLine = (text) => String(text).replace(/[\r\n]+/g, ' ');
-const escapeHtml = (text) => oneLine(text).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
-const escapeMarkdown = (text) => escapeHtml(text).replace(/[\\`*_{}[\]()#+\-.!|~]/g, '\\$&');
+const escapeMarkdown = (text) => oneLine(text)
+  .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+  .replace(/[\\`*_{}[\]()#+\-.!|~]/g, '\\$&');
 
-/**
- * Names each failed condition, then lists each new issue and hotspot to
- * review as `path:line rule — message` in the log and the job summary, and
- * annotates the first ones. `reportTask` is the scanner's report-task.txt.
- */
-module.exports = async function reportGate({ core, host, token, reportTask }) {
+/** Returns a client that reads the SonarQube Web API at `host` with `token`. */
+const newSonarQube = ({ host, token }) => {
   const get = async (path, query) => {
     const response = await fetch(`${host}${path}?${new URLSearchParams(query)}`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -31,6 +28,7 @@ module.exports = async function reportGate({ core, host, token, reportTask }) {
     }
     return response.json();
   };
+  /** Reads every page of a search, and counts the items past the search limit. */
   const getAll = async ({ path, key, query }) => {
     const items = [];
     for (let page = 1; ; page += 1) {
@@ -42,14 +40,38 @@ module.exports = async function reportGate({ core, host, token, reportTask }) {
       }
     }
   };
+  return { get, getAll };
+};
 
+/**
+ * Logs each line with workflow commands stopped, so a path or message adds no
+ * annotation of its own. The runner reads a log line that starts with `::` as
+ * a command.
+ */
+const logInert = (core, lines) => {
+  const resume = randomUUID();
+  core.info(`::stop-commands::${resume}`);
+  try {
+    lines.forEach((line) => core.info(oneLine(line)));
+  } finally {
+    core.info(`::${resume}::`);
+  }
+};
+
+/**
+ * Names each failed condition, then lists each new issue and hotspot to
+ * review as `path:line rule — message` in the log and the job summary, and
+ * annotates the first ones. `reportTask` is the scanner's report-task.txt.
+ */
+module.exports = async function reportGate({ core, host, token, reportTask }) {
+  const sonarQube = newSonarQube({ host, token });
   const taskId = reportTask.match(/^ceTaskId=(.*)$/m)?.[1];
-  const { task } = await get('/api/ce/task', { id: taskId });
+  const { task } = await sonarQube.get('/api/ce/task', { id: taskId });
   if (!task.analysisId) {
     core.warning(`The analysis task is ${task.status}, so it has no quality gate result to read`);
     return;
   }
-  const { projectStatus } = await get('/api/qualitygates/project_status', { analysisId: task.analysisId });
+  const { projectStatus } = await sonarQube.get('/api/qualitygates/project_status', { analysisId: task.analysisId });
   const conditions = projectStatus.conditions
     .filter((condition) => condition.status === 'ERROR')
     .map((condition) => `${condition.metricKey} is ${condition.actualValue}, ` +
@@ -62,7 +84,7 @@ module.exports = async function reportGate({ core, host, token, reportTask }) {
     summary.addRaw(`\n${escapeMarkdown(message)}\n`);
   };
   try {
-    await listFindings({ core, task, summary, warn, getAll, annotationCount: conditions.length });
+    await listFindings({ core, sonarQube, task, summary, warn, annotationCount: conditions.length });
   } finally {
     await summary.write();
   }
@@ -72,7 +94,7 @@ module.exports = async function reportGate({ core, host, token, reportTask }) {
  * Lists the new hotspots and issues of the task's analysis in the log and
  * the job summary, and annotates the first ones.
  */
-const listFindings = async ({ core, task, summary, warn, getAll, annotationCount }) => {
+const listFindings = async ({ core, sonarQube, task, summary, warn, annotationCount }) => {
   // The search reads all issues of a PR, but only the new code period of a
   // branch. A PR analysis holds only the PR's changes, so all its issues are
   // new.
@@ -84,7 +106,7 @@ const listFindings = async ({ core, task, summary, warn, getAll, annotationCount
   // search answers an empty list.
   let hotspots;
   try {
-    hotspots = await getAll({
+    hotspots = await sonarQube.getAll({
       path: '/api/hotspots/search',
       key: 'hotspots',
       query: { projectKey: task.componentKey, status: 'TO_REVIEW', ...scope },
@@ -96,7 +118,7 @@ const listFindings = async ({ core, task, summary, warn, getAll, annotationCount
     warn(`The SonarQube token may not browse ${task.componentKey}, so its new issues and hotspots stay in SonarQube`);
     return;
   }
-  const issues = await getAll({
+  const issues = await sonarQube.getAll({
     path: '/api/issues/search',
     key: 'issues',
     query: { components: task.componentKey, issueStatuses: 'OPEN,CONFIRMED', ...scope },
@@ -117,30 +139,25 @@ const listFindings = async ({ core, task, summary, warn, getAll, annotationCount
     },
     { heading: 'new issues', title: 'New issue', findings: issues.items },
   ].filter((group) => group.findings.length > 0);
-  for (const { title, findings } of groups) {
-    for (const finding of findings.slice(0, ANNOTATION_LIMIT - annotationCount)) {
-      annotationCount += 1;
-      core.error(finding.message,
-        { title: `${title} ${finding.rule}`, file: pathOf(finding.component), startLine: finding.line });
-    }
+  const annotated = groups
+    .flatMap(({ title, findings }) => findings.map((finding) => ({ ...finding, title: `${title} ${finding.rule}` })))
+    .slice(0, Math.max(0, ANNOTATION_LIMIT - annotationCount));
+  for (const finding of annotated) {
+    core.error(finding.message, { title: finding.title, file: pathOf(finding.component), startLine: finding.line });
   }
-  // The function stops workflow commands while it logs findings, so a path or
-  // message adds no annotation of its own. The runner reads a log line that
-  // starts with `::` as a command.
-  const resume = randomUUID();
-  core.info(`::stop-commands::${resume}`);
+  const lines = [];
   for (const { heading, findings } of groups) {
-    core.info(`${findings.length} ${heading}:`);
+    lines.push(`${findings.length} ${heading}:`);
     summary.addRaw(`\n#### ${findings.length} ${heading}\n\n`);
     for (const finding of findings) {
       const path = pathOf(finding.component);
       const where = finding.line ? `${path}:${finding.line}` : path;
-      core.info(oneLine(`${where} ${finding.rule} — ${finding.message}`));
-      summary.addRaw(`- <code>${escapeHtml(where)}</code> ${escapeMarkdown(finding.rule)} — ` +
+      lines.push(`${where} ${finding.rule} — ${finding.message}`);
+      summary.addRaw(`- <code>${escapeMarkdown(where)}</code> ${escapeMarkdown(finding.rule)} — ` +
         `${escapeMarkdown(finding.message)}\n`);
     }
   }
-  core.info(`::${resume}::`);
+  logInert(core, lines);
   const left = hotspots.left + issues.left;
   if (left > 0) {
     warn(`${left} more new issues and hotspots are in SonarQube`);
