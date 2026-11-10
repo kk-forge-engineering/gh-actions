@@ -45,4 +45,4 @@ project-orchestration deploys the references a Release lists ([Release and deplo
 
 ## Checks
 
-`mise run check` runs actionlint, which also runs shellcheck over every `run:` script, and `tsc` over the TypeScript. It also runs the tests of [gate-report.ts](/sonarqube-scan/gate-report.ts) against a fake SonarQube. The CI workflow runs `mise run check` on every push to this repo. `mise run setup` installs `tsc` and the Node types.
+`mise run check` runs the linters and tests in [mise.toml](/mise.toml). The tests run [gate-report.ts](/sonarqube-scan/gate-report.ts) against a fake SonarQube. The CI workflow runs `mise run check:ci` on every push to this repo. `mise run setup` installs `tsc` and the Node types.

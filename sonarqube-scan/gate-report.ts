@@ -52,7 +52,6 @@ type HotspotsResponse = {
 };
 /** An issue or a hotspot, under the issue's field names. */
 type Finding = IssuesResponse['issues'][number];
-type Task = TaskResponse['task'];
 type Query = Record<string, string>;
 
 /** GitHub turns only a step's first 10 errors into annotations. */
@@ -154,10 +153,7 @@ const newSonarQube = ({ host, token }: { host: string; token: string }) => {
     }
     return response.json();
   };
-  /**
-   * Reads every page of a search up to the search limit. `readPage` turns one
-   * answer into its findings and paging. Returns the findings and the count left.
-   */
+  /** Reads every page of a search up to the search limit. Returns the findings and the count left. */
   const searchFindings = async (
     { path, query, readPage }:
     { path: string; query: Query; readPage: (body: unknown) => { paging: Paging; findings: Finding[] } },
@@ -228,7 +224,7 @@ export const reportGate = async (
  */
 const listFindings = async (
   { core, sonarQube, task, summary, usedAnnotations }:
-  { core: Core; sonarQube: SonarQube; task: Task; summary: Summary; usedAnnotations: number },
+  { core: Core; sonarQube: SonarQube; task: TaskResponse['task']; summary: Summary; usedAnnotations: number },
 ): Promise<void> => {
   const warn = (message: string): void => {
     core.warning(message);
@@ -247,8 +243,11 @@ const listFindings = async (
     path: '/api/hotspots/search',
     query: { projectKey: task.componentKey, status: 'TO_REVIEW', ...scope },
     readPage: (body) => {
-      const { paging, hotspots: page } = readHotspotsResponse(body);
-      return { paging, findings: page.map(({ ruleKey, ...hotspot }) => ({ ...hotspot, rule: ruleKey })) };
+      const response = readHotspotsResponse(body);
+      return {
+        paging: response.paging,
+        findings: response.hotspots.map(({ ruleKey, ...hotspot }) => ({ ...hotspot, rule: ruleKey })),
+      };
     },
   }).catch((error: unknown) => {
     if (fieldOf(error, 'status') !== 403) {
@@ -264,8 +263,8 @@ const listFindings = async (
     path: '/api/issues/search',
     query: { components: task.componentKey, issueStatuses: 'OPEN,CONFIRMED', ...scope },
     readPage: (body) => {
-      const { paging, issues: page } = readIssuesResponse(body);
-      return { paging, findings: page };
+      const response = readIssuesResponse(body);
+      return { paging: response.paging, findings: response.issues };
     },
   });
 
