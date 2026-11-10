@@ -44,9 +44,7 @@ const newCondition = (metricKey: string) =>
   ({ status: 'ERROR', metricKey, comparator: 'GT', actualValue: '25', errorThreshold: '0' });
 
 /**
- * Starts a fake SonarQube that serves these hotspots and issues.
- * Returns its URL, the requests it answered, and a function that stops it.
- * `status` overrides the HTTP status for a path, and `answers` the body.
+ * Starts a fake SonarQube. Returns its URL, its requests and a stop function.
  * `hiddenIssues` counts issues that the total holds but no page serves.
  */
 const startSonarQube = async ({

@@ -68,9 +68,6 @@ const escapeMarkdown = (text: string): string => oneLine(text)
   .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
   .replace(/[\\`*_{}[\]()#+\-.!|~]/g, '\\$&');
 
-// These readers turn an answer into its response type. A required field of
-// another type fails with the field's name, and an optional one that is
-// missing reads as undefined.
 const fieldOf = (value: unknown, key: string): unknown =>
   typeof value === 'object' && value !== null ? (value as Record<string, unknown>)[key] : undefined;
 const readText = (value: unknown, key: string): string => {
@@ -195,7 +192,7 @@ const logInert = (core: Core, lines: string[]): void => {
 /**
  * Names each failed condition, then lists each new issue and hotspot to
  * review as `path:line rule — message` in the log and the job summary, and
- * annotates the first ones. `reportTask` is the scanner's report-task.txt.
+ * annotates the first ones. `reportTask` is the text of report-task.txt.
  */
 export const reportGate = async (
   { core, host, token, reportTask }: { core: Core; host: string; token: string; reportTask: string },
