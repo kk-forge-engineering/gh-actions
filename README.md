@@ -37,6 +37,24 @@ Reusable GitHub workflows and actions. Pin them to the major tag, such as `@v4`.
       secrets: { DOCKER_REGISTRY_TOKEN: "${{ secrets.DOCKER_REGISTRY_TOKEN }}" }
   ```
 
+- [Release npm](/.github/workflows/release-npm.yml) publishes the package in the repo root to npm under the version in its `package.json`, X.Y.Z, then publishes a GitHub Release `v<version>` that links to it. A push to the default branch whose version has no tag yet runs the repo's `mise run setup` and `mise run check`, then its `mise run pack`, and publishes the tarball. When the tag already exists, the run ends green without a release, and warns when the tag points at another commit. When the `tag` job fails after the publish, rerun that run's failed jobs, so the tag lands on the published commit. Until the tag exists, a later run with the same version fails at the publish. The repo's `pack` task installs the dependencies without their scripts, builds, and leaves one tarball from `npm pack` in the repo root. npm takes the package through Trusted Publishing, with no token, and adds provenance for a public repo. Every job runs on a hosted runner: npm accepts the OIDC token only from one. What the package needs:
+  - On npmjs.com, the package's Trusted Publisher for GitHub Actions names the caller's repo, the workflow filename `release.yml`, the environment `production`, and allows `npm publish`. npm checks the calling workflow, not this one.
+  - The caller's repo has the environment `production`, whose required reviewers approve each publish and whose deployment branches are the default branch alone. npm checks no branch, so a `release.yml` on another branch could otherwise reach it.
+  - The package's publishing access on npmjs.com requires two-factor authentication and disallows tokens.
+  - `repository.url` in `package.json` names the caller's repo.
+
+  The caller, `.github/workflows/release.yml`:
+  ```yaml
+  name: Release
+  on:
+    push:
+      branches: [main]
+  jobs:
+    release:
+      uses: kk-forge-engineering/gh-actions/.github/workflows/release-npm.yml@v4
+      permissions: { contents: write, id-token: write }
+  ```
+
 project-orchestration deploys the references a Release lists ([Release and deploy](https://github.com/kk-forge-engineering/project-orchestration/blob/main/docs/release-and-deploy.md)).
 
 ## Actions

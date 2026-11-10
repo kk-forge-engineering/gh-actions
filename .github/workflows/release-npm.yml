@@ -1,0 +1,161 @@
+# Publishes the package in the repo root to npm under the version in its package.json, then tags v<version> with a
+# GitHub Release. The caller's release.yml calls it on a push to the default branch (README.md).
+name: Release npm
+
+on:
+  workflow_call:
+
+# Releases of a repo run one at a time, so a run that waited finds the tag the run before it created.
+concurrency:
+  group: release-npm-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      name: ${{ steps.version.outputs.name }}
+      release: ${{ steps.version.outputs.release }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The tags show whether this version is released already.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Pick the version
+        id: version
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF" != "refs/heads/$DEFAULT_BRANCH" ]; then
+            echo "::error::A release comes from $DEFAULT_BRANCH, not from $GITHUB_REF_NAME"
+            exit 1
+          fi
+          name=$(jq -r .name package.json)
+          version=$(jq -r .version package.json)
+          if ! [[ "$name" =~ ^(@[a-z0-9~-][a-z0-9._~-]*/)?[a-z0-9~-][a-z0-9._~-]*$ ]]; then
+            echo "::error::package.json names the package «${name}», not an npm package name"
+            exit 1
+          fi
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::package.json gives the version «${version}», not X.Y.Z"
+            exit 1
+          fi
+          echo "name=$name" >>"$GITHUB_OUTPUT"
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+          # A tag never moves. A merge that keeps the version releases nothing and stays green.
+          if tagged=$(git rev-parse -q --verify "refs/tags/v$version^{commit}"); then
+            if [ "$tagged" = "$GITHUB_SHA" ]; then
+              echo "v$version is already released from this commit"
+            else
+              echo "::warning::v$version is already released from ${tagged:0:7}, so this commit releases nothing. Raise the version in package.json."
+            fi
+            echo "release=false" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "Releasing $name $version"
+          echo "release=true" >>"$GITHUB_OUTPUT"
+
+  check:
+    needs: version
+    if: ${{ needs.version.outputs.release == 'true' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      # This step installs the tools fresh, not from the gha cache, which any workflow of the repo can write.
+      - uses: jdx/mise-action@v5
+        with:
+          cache: false
+      - run: mise run setup
+      - run: mise run check
+
+  # The checks run the code of every devDependency, so the tarball comes from a job of its own. The caller's `pack`
+  # task installs the dependencies without their scripts.
+  pack:
+    needs: check
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@v5
+        with:
+          cache: false
+      - run: mise run pack
+      - uses: actions/upload-artifact@v7
+        with:
+          name: package
+          path: "*.tgz"
+          if-no-files-found: error
+
+  publish:
+    needs: [version, pack]
+    # npm accepts the OIDC token only from a GitHub-hosted runner.
+    runs-on: ubuntu-24.04
+    # The environment's required reviewers approve each release before the job can mint the token.
+    environment: production
+    permissions:
+      id-token: write
+    env:
+      NAME: ${{ needs.version.outputs.name }}
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: package
+          path: package
+
+      # The pack job ran the caller's tools, so this step checks that its tarball is the package being released.
+      - name: Check the tarball
+        id: tarball
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          tarballs=(./package/*.tgz)
+          if [ "${#tarballs[@]}" -ne 1 ]; then
+            echo "::error::mise run pack left ${#tarballs[@]} tarballs, not one"
+            exit 1
+          fi
+          packed=$(tar -xOzf "${tarballs[0]}" package/package.json | jq -r '"\(.name) \(.version)"')
+          if [ "$packed" != "$NAME $VERSION" ]; then
+            echo "::error::The tarball holds $packed, not $NAME $VERSION"
+            exit 1
+          fi
+          echo "path=${tarballs[0]}" >>"$GITHUB_OUTPUT"
+
+      # Trusted publishing needs npm 11.5.1 or later, which Node 26 ships.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          package-manager-cache: false
+
+      - run: npm publish "$TARBALL" --ignore-scripts
+        env:
+          TARBALL: ${{ steps.tarball.outputs.path }}
+
+  tag:
+    needs: [version, publish]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      # The Release API creates the tag on this commit, so no step runs git with the write token.
+      - name: Tag the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NAME: ${{ needs.version.outputs.name }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          gh release create "v$VERSION" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "v$VERSION" \
+            --notes "https://www.npmjs.com/package/$NAME/v/$VERSION"
