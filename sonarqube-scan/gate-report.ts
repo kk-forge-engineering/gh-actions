@@ -114,7 +114,6 @@ const readFinding = (item: unknown, ruleField: string): Finding => {
   };
 };
 
-/** Returns a client that reads the SonarQube Web API at `host` with `token`. */
 const newSonarQube = ({ host, token }: { host: string; token: string }) => {
   const get = async (path: string, query: Query): Promise<unknown> => {
     const response = await fetch(`${host}${path}?${new URLSearchParams(query)}`, {
