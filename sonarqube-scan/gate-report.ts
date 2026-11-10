@@ -33,7 +33,7 @@ type ProjectStatusResponse = {
       status: string;
       metricKey: string;
       comparator: string;
-      // SonarQube leaves out the value of a condition it could not measure.
+      /** SonarQube leaves this out for a condition it could not measure. */
       actualValue?: string;
       errorThreshold: string;
     }[];
