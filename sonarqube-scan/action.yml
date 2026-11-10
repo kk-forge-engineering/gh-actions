@@ -79,7 +79,8 @@ runs:
         SONAR_TOKEN: ${{ inputs.sonar-token }}
       with:
         script: |
-          await require(`${process.env.ACTION_PATH}/gate-report.js`)({
+          const { reportGate } = require(`${process.env.ACTION_PATH}/gate-report.ts`);
+          await reportGate({
             core,
             host: process.env.SONAR_HOST_URL,
             token: process.env.SONAR_TOKEN,
