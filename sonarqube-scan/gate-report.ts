@@ -16,29 +16,42 @@ type Summary = {
   write: () => Promise<unknown>;
 };
 
-/** The analysis task that `/api/ce/task` returns. */
-type Task = {
-  status: string;
-  componentKey: string;
-  analysisId?: string;
-  pullRequest?: string;
-  branch?: string;
+/** The fields of the `/api/ce/task` answer that the script reads. */
+type TaskResponse = {
+  task: {
+    status: string;
+    componentKey: string;
+    analysisId?: string;
+    pullRequest?: string;
+    branch?: string;
+  };
 };
-/** A quality gate condition that `/api/qualitygates/project_status` returns. */
-type Condition = {
-  status: string;
-  metricKey: string;
-  comparator: string;
-  actualValue?: string;
-  errorThreshold?: string;
+/** The fields of the `/api/qualitygates/project_status` answer that the script reads. */
+type ProjectStatusResponse = {
+  projectStatus: {
+    conditions: {
+      status: string;
+      metricKey: string;
+      comparator: string;
+      actualValue: string;
+      errorThreshold: string;
+    }[];
+  };
 };
-/** An issue from `/api/issues/search` or a hotspot from `/api/hotspots/search`. */
-type Finding = {
-  component: string;
-  line?: number;
-  rule: string;
-  message: string;
+type Paging = { total: number };
+/** The fields of the `/api/issues/search` answer that the script reads. */
+type IssuesResponse = {
+  paging: Paging;
+  issues: { component: string; line?: number; rule: string; message: string }[];
 };
+/** The fields of the `/api/hotspots/search` answer that the script reads. */
+type HotspotsResponse = {
+  paging: Paging;
+  hotspots: { component: string; line?: number; ruleKey: string; message: string }[];
+};
+/** An issue or a hotspot, under the issue's field names. */
+type Finding = IssuesResponse['issues'][number];
+type Task = TaskResponse['task'];
 type Query = Record<string, string>;
 
 /** GitHub turns only a step's first 10 errors into annotations. */
@@ -55,8 +68,9 @@ const escapeMarkdown = (text: string): string => oneLine(text)
   .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
   .replace(/[\\`*_{}[\]()#+\-.!|~]/g, '\\$&');
 
-// These readers check each field the script uses, so an answer of another
-// shape fails with the field's name instead of printing `undefined`.
+// These readers turn an answer into its response type. A required field of
+// another type fails with the field's name, and an optional one that is
+// missing reads as undefined.
 const fieldOf = (value: unknown, key: string): unknown =>
   typeof value === 'object' && value !== null ? (value as Record<string, unknown>)[key] : undefined;
 const readText = (value: unknown, key: string): string => {
@@ -77,6 +91,10 @@ const readNumber = (value: unknown, key: string): number => {
   }
   return field;
 };
+const readOptionalNumber = (value: unknown, key: string): number | undefined => {
+  const field = fieldOf(value, key);
+  return typeof field === 'number' ? field : undefined;
+};
 const readList = (value: unknown, key: string): unknown[] => {
   const field = fieldOf(value, key);
   if (!Array.isArray(field)) {
@@ -85,34 +103,48 @@ const readList = (value: unknown, key: string): unknown[] => {
   return field;
 };
 
-const readTask = (body: unknown): Task => {
+const readTaskResponse = (body: unknown): TaskResponse => {
   const task = fieldOf(body, 'task');
   return {
-    status: readText(task, 'status'),
-    componentKey: readText(task, 'componentKey'),
-    analysisId: readOptionalText(task, 'analysisId'),
-    pullRequest: readOptionalText(task, 'pullRequest'),
-    branch: readOptionalText(task, 'branch'),
+    task: {
+      status: readText(task, 'status'),
+      componentKey: readText(task, 'componentKey'),
+      analysisId: readOptionalText(task, 'analysisId'),
+      pullRequest: readOptionalText(task, 'pullRequest'),
+      branch: readOptionalText(task, 'branch'),
+    },
   };
 };
-const readConditions = (body: unknown): Condition[] =>
-  readList(fieldOf(body, 'projectStatus'), 'conditions').map((condition) => ({
-    status: readText(condition, 'status'),
-    metricKey: readText(condition, 'metricKey'),
-    comparator: readText(condition, 'comparator'),
-    actualValue: readOptionalText(condition, 'actualValue'),
-    errorThreshold: readOptionalText(condition, 'errorThreshold'),
-  }));
-/** Reads a finding whose rule key sits in `ruleField`: `rule` for an issue, `ruleKey` for a hotspot. */
-const readFinding = (item: unknown, ruleField: string): Finding => {
-  const line = fieldOf(item, 'line');
-  return {
-    component: readText(item, 'component'),
-    line: typeof line === 'number' ? line : undefined,
-    rule: readText(item, ruleField),
-    message: readText(item, 'message'),
-  };
-};
+const readProjectStatusResponse = (body: unknown): ProjectStatusResponse => ({
+  projectStatus: {
+    conditions: readList(fieldOf(body, 'projectStatus'), 'conditions').map((condition) => ({
+      status: readText(condition, 'status'),
+      metricKey: readText(condition, 'metricKey'),
+      comparator: readText(condition, 'comparator'),
+      actualValue: readText(condition, 'actualValue'),
+      errorThreshold: readText(condition, 'errorThreshold'),
+    })),
+  },
+});
+const readPaging = (body: unknown): Paging => ({ total: readNumber(fieldOf(body, 'paging'), 'total') });
+const readIssuesResponse = (body: unknown): IssuesResponse => ({
+  paging: readPaging(body),
+  issues: readList(body, 'issues').map((issue) => ({
+    component: readText(issue, 'component'),
+    line: readOptionalNumber(issue, 'line'),
+    rule: readText(issue, 'rule'),
+    message: readText(issue, 'message'),
+  })),
+});
+const readHotspotsResponse = (body: unknown): HotspotsResponse => ({
+  paging: readPaging(body),
+  hotspots: readList(body, 'hotspots').map((hotspot) => ({
+    component: readText(hotspot, 'component'),
+    line: readOptionalNumber(hotspot, 'line'),
+    ruleKey: readText(hotspot, 'ruleKey'),
+    message: readText(hotspot, 'message'),
+  })),
+});
 
 const newSonarQube = ({ host, token }: { host: string; token: string }) => {
   const get = async (path: string, query: Query): Promise<unknown> => {
@@ -122,23 +154,26 @@ const newSonarQube = ({ host, token }: { host: string; token: string }) => {
     if (!response.ok) {
       throw Object.assign(new Error(`SonarQube answered ${response.status} to ${path}`), { status: response.status });
     }
-    const body: unknown = await response.json();
-    return body;
+    return response.json();
   };
-  /** Returns the findings up to the search limit, and the count of findings left. */
-  const getAll = async ({ path, key, ruleField, query }: { path: string; key: string; ruleField: string; query: Query }) => {
+  /**
+   * Reads every page of a search up to the search limit. `readPage` turns one
+   * answer into its findings and paging. Returns the findings and the count left.
+   */
+  const searchFindings = async (
+    { path, query, readPage }:
+    { path: string; query: Query; readPage: (body: unknown) => { paging: Paging; findings: Finding[] } },
+  ) => {
     const items: Finding[] = [];
     for (let page = 1; ; page += 1) {
-      const body = await get(path, { ...query, ps: String(PAGE_SIZE), p: String(page) });
-      const pageItems = readList(body, key);
-      items.push(...pageItems.map((item) => readFinding(item, ruleField)));
-      const total = readNumber(fieldOf(body, 'paging'), 'total');
-      if (pageItems.length === 0 || items.length >= Math.min(total, SEARCH_LIMIT)) {
-        return { items, left: total - items.length };
+      const { paging, findings } = readPage(await get(path, { ...query, ps: String(PAGE_SIZE), p: String(page) }));
+      items.push(...findings);
+      if (findings.length === 0 || items.length >= Math.min(paging.total, SEARCH_LIMIT)) {
+        return { items, left: paging.total - items.length };
       }
     }
   };
-  return { get, getAll };
+  return { get, searchFindings };
 };
 type SonarQube = ReturnType<typeof newSonarQube>;
 
@@ -167,12 +202,15 @@ export const reportGate = async (
 ): Promise<void> => {
   const sonarQube = newSonarQube({ host, token });
   const taskId = reportTask.match(/^ceTaskId=(.*)$/m)?.[1] ?? '';
-  const task = readTask(await sonarQube.get('/api/ce/task', { id: taskId }));
+  const { task } = readTaskResponse(await sonarQube.get('/api/ce/task', { id: taskId }));
   if (!task.analysisId) {
     core.warning(`The analysis task is ${task.status}, so it has no quality gate result to read`);
     return;
   }
-  const conditions = readConditions(await sonarQube.get('/api/qualitygates/project_status', { analysisId: task.analysisId }))
+  const { projectStatus } = readProjectStatusResponse(
+    await sonarQube.get('/api/qualitygates/project_status', { analysisId: task.analysisId }),
+  );
+  const conditions = projectStatus.conditions
     .filter((condition) => condition.status === 'ERROR')
     .map((condition) => `${condition.metricKey} is ${condition.actualValue}, ` +
       `the gate wants it not ${condition.comparator === 'GT' ? 'above' : 'below'} ${condition.errorThreshold}`);
@@ -207,26 +245,30 @@ const listFindings = async (
   // The function reads hotspots first, so a token without Browse gets a
   // warning. Without Browse, the hotspot search answers 403, but the issue
   // search answers an empty list.
-  let hotspots;
-  try {
-    hotspots = await sonarQube.getAll({
-      path: '/api/hotspots/search',
-      key: 'hotspots',
-      ruleField: 'ruleKey',
-      query: { projectKey: task.componentKey, status: 'TO_REVIEW', ...scope },
-    });
-  } catch (error) {
+  const hotspots = await sonarQube.searchFindings({
+    path: '/api/hotspots/search',
+    query: { projectKey: task.componentKey, status: 'TO_REVIEW', ...scope },
+    readPage: (body) => {
+      const { paging, hotspots: page } = readHotspotsResponse(body);
+      return { paging, findings: page.map(({ ruleKey, ...hotspot }) => ({ ...hotspot, rule: ruleKey })) };
+    },
+  }).catch((error: unknown) => {
     if (fieldOf(error, 'status') !== 403) {
       throw error;
     }
+    return undefined;
+  });
+  if (!hotspots) {
     warn(`The SonarQube token may not browse ${task.componentKey}, so its new issues and hotspots stay in SonarQube`);
     return;
   }
-  const issues = await sonarQube.getAll({
+  const issues = await sonarQube.searchFindings({
     path: '/api/issues/search',
-    key: 'issues',
-    ruleField: 'rule',
     query: { components: task.componentKey, issueStatuses: 'OPEN,CONFIRMED', ...scope },
+    readPage: (body) => {
+      const { paging, issues: page } = readIssuesResponse(body);
+      return { paging, findings: page };
+    },
   });
 
   /**

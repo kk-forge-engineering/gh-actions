@@ -23,6 +23,7 @@ type FakeSonarQube = {
   issues?: object[];
   hiddenIssues?: number;
   status?: Record<string, number>;
+  answers?: Record<string, object>;
 };
 type Annotation = { message: string; title?: string; file?: string; startLine?: number };
 type FakeCore = Core & {
@@ -45,11 +46,11 @@ const newCondition = (metricKey: string) =>
 /**
  * Starts a fake SonarQube that serves these hotspots and issues.
  * Returns its URL, the requests it answered, and a function that stops it.
- * `status` overrides the HTTP status for a path. `hiddenIssues` counts issues
- * that the total holds but no page serves.
+ * `status` overrides the HTTP status for a path, and `answers` the body.
+ * `hiddenIssues` counts issues that the total holds but no page serves.
  */
 const startSonarQube = async ({
-  task = PR_TASK, failedConditions = 1, hotspots = [], issues = [], hiddenIssues = 0, status = {},
+  task = PR_TASK, failedConditions = 1, hotspots = [], issues = [], hiddenIssues = 0, status = {}, answers = {},
 }: FakeSonarQube) => {
   const requests: URL[] = [];
   const page = <T>({ items, query, total = items.length }: { items: T[]; query: URLSearchParams; total?: number }) => {
@@ -61,6 +62,9 @@ const startSonarQube = async ({
   };
   const answer = (url: URL): object | undefined => {
     const query = url.searchParams;
+    if (answers[url.pathname]) {
+      return answers[url.pathname];
+    }
     switch (url.pathname) {
       case '/api/ce/task':
         return { task };
@@ -258,6 +262,15 @@ test('names the field when SonarQube answers in another shape', async () => {
 
   await assert.rejects(run({ core, issues: [{ component: `${PROJECT}:src/a.ts`, line: 1, message: 'x' }] }),
     /SonarQube sent no text rule/);
+});
+
+test('names the missing list or number when SonarQube answers in another shape', async () => {
+  await assert.rejects(
+    run({ core: newFakeCore(), answers: { '/api/qualitygates/project_status': { projectStatus: {} } } }),
+    /SonarQube sent no list conditions/);
+  await assert.rejects(
+    run({ core: newFakeCore(), answers: { '/api/issues/search': { paging: {}, issues: [] } } }),
+    /SonarQube sent no number total/);
 });
 
 test('warns when the analysis task has no analysis', async () => {

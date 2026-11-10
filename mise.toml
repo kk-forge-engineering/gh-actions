@@ -8,10 +8,18 @@ node = "24"
 description = "Install every dependency"
 run = "npm ci"
 
-# actionlint also runs shellcheck over every `run:` script in the workflows, and tsc checks the types.
 [tasks.lint]
 description = "Every linter"
-run = ["actionlint", "npx --no tsc"]
+depends = ["lint:actionlint", "lint:tsc"]
+
+# actionlint also runs shellcheck over every `run:` script in the workflows.
+[tasks."lint:actionlint"]
+description = "Lint the workflows and their scripts"
+run = "actionlint"
+
+[tasks."lint:tsc"]
+description = "Check the TypeScript types"
+run = "npx --no tsc"
 
 [tasks.test]
 description = "Every test"
