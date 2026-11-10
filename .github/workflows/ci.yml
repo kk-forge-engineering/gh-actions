@@ -15,14 +15,19 @@ on:
 
 jobs:
   ci:
-    # A public repo never runs on the kk-forge runner: a pull request from a fork would run someone else's code on
-    # the kk-forge server. So a public repo runs on a hosted runner.
-    runs-on: ${{ github.event.repository.private && fromJSON('["self-hosted","swarm"]') || 'ubuntu-24.04' }}
+    # A public repo, or a PR whose head is outside the repo, never runs on the kk-forge runner: it would run someone
+    # else's code on the kk-forge server. Such a run goes to a hosted runner.
+    runs-on: >-
+      ${{ github.event.repository.private
+      && (!github.event.pull_request || github.event.pull_request.head.repo.full_name == github.repository)
+      && fromJSON('["self-hosted","swarm"]') || 'ubuntu-24.04' }}
     # A newer run of the same event and ref makes this one moot. A push never cancels a `workflow_dispatch` run on
     # its branch: the caller's dev release needs this job and would be cancelled with it.
     concurrency:
       group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
       cancel-in-progress: true
+    outputs:
+      has-reports: ${{ steps.upload.outcome == 'success' }}
     permissions:
       contents: read
       pull-requests: read
@@ -35,6 +40,20 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           # `setup` runs third-party install scripts, so the token stays out of .git/config.
           persist-credentials: false
+
+      # The scan runs in the next job, apart from the repo's tools, so the reports it reads cross as an artifact.
+      # This step lists them before setup, while sonar-project.properties and git are still the checked-out ones.
+      - id: reports
+        name: List the coverage reports
+        if: ${{ hashFiles('sonar-project.properties') != '' }}
+        run: |
+          set -euo pipefail
+          paths=$(git show HEAD:sonar-project.properties | tr -d '\r' |
+            sed -n 's/^[[:space:]]*sonar\.[A-Za-z0-9.]*[Rr]eportPaths[[:space:]]*[=:][[:space:]]*//p' | tr ',' '\n' |
+            sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep -v '^$' || true)
+          # The upload adds sonar-project.properties, so the artifact's root is always the repo root.
+          d=$(openssl rand -hex 16)
+          { echo "paths<<$d"; echo sonar-project.properties; echo "$paths"; echo "$d"; } >>"$GITHUB_OUTPUT"
 
       # Node 26's binary links libatomic, which the self-hosted runner's image lacks, so mise fails to install it.
       - name: Install libatomic1
@@ -51,14 +70,71 @@ jobs:
       - id: check
         run: mise run --continue-on-error check:ci
 
-      # The token check and the scan run after a red check:ci too, so SonarQube's quality gate on new code
-      # still judges a pull request in a repo below the coverage floor. A failed setup skips check:ci, and so both.
-      # A PR from a fork gets no secrets, so it skips both.
-      - id: token
-        name: Check the SonarQube token
-        if: >-
-          ${{ !cancelled() && steps.check.outcome != 'skipped' && hashFiles('sonar-project.properties') != ''
-          && (!github.event.pull_request || github.event.pull_request.head.repo.full_name == github.repository) }}
+      - id: upload
+        name: Upload the coverage reports
+        if: ${{ !cancelled() && steps.check.outcome != 'skipped' && steps.reports.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: sonar-reports
+          path: ${{ steps.reports.outputs.paths }}
+          include-hidden-files: true
+          # A rerun of a red scan, say after marking a false positive in SonarQube, needs the artifact still there.
+          retention-days: 7
+
+      # SonarJS resolves types through what setup installs and generates, such as node_modules and a tsconfig it
+      # extends. Without them it reads TypeScript untyped and reports false issues. These files are data the scan only
+      # reads.
+      - name: Upload the type files
+        if: ${{ !cancelled() && steps.upload.outcome == 'success' }}
+        # The scan runs without the type files too, so a failed upload leaves check:ci's result as it is.
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: sonar-types
+          path: |
+            **/*.d.ts
+            **/*.d.mts
+            **/*.d.cts
+            **/node_modules/**/package.json
+            **/tsconfig*.json
+            !.git/**
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # The SonarQube token lives only in this job, which runs none of the repo's tools: setup's third-party install
+  # scripts could otherwise reach it through GITHUB_ENV, GITHUB_PATH or a process left running.
+  sonar:
+    needs: ci
+    # This limit stops a huge artifact from holding the kk-forge runner for GitHub's default six hours.
+    timeout-minutes: 30
+    # The scan runs after a red check:ci too, so SonarQube's quality gate on new code still judges a pull request in a
+    # repo below the coverage floor. A failed setup skips check:ci and the report upload, and so the scan. A PR whose
+    # head is outside the repo gets no secrets, so it skips the scan too. The condition stays on one line: GitHub missed
+    # `!cancelled()` in a folded one and skipped the scan after every red check:ci.
+    if: ${{ !cancelled() && needs.ci.result != 'cancelled' && needs.ci.outputs.has-reports == 'true' && (!github.event.pull_request || github.event.pull_request.head.repo.full_name == github.repository) }}
+    runs-on: ${{ github.event.repository.private && fromJSON('["self-hosted","swarm"]') || 'ubuntu-24.04' }}
+    concurrency:
+      group: sonar-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+      cancel-in-progress: true
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # SonarQube reads the history to tell new code from old.
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      # SonarJS runs its embedded Node, as this job installs none. Node links libatomic, which the self-hosted runner's
+      # image lacks.
+      - name: Install libatomic1
+        if: runner.os == 'Linux'
+        run: ldconfig -p | grep -q libatomic.so.1 || { sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends libatomic1; }
+
+      - name: Check the SonarQube token
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
@@ -67,82 +143,91 @@ jobs:
             exit 1
           fi
 
-      - id: sonar
-        name: SonarQube scan
-        if: ${{ !cancelled() && steps.token.outcome == 'success' }}
-        uses: kk-forge-engineering/gh-actions/sonarqube-scan@v2
+      # The artifact is data the repo's tools wrote. Only the files the committed sonar-project.properties names
+      # leave it.
+      - name: Download the coverage reports
+        uses: actions/download-artifact@v8
+        with:
+          name: sonar-reports
+          path: ${{ runner.temp }}/sonar-reports
+
+      # The list comes from this job's own checkout, never from the ci job, whose tools could forge its outputs. A
+      # path leaves the artifact only to a plain file inside the workspace.
+      - name: Put the coverage reports in place
+        env:
+          REPORTS: ${{ runner.temp }}/sonar-reports
+        run: |
+          set -euo pipefail
+          paths=$(git show HEAD:sonar-project.properties | tr -d '\r' |
+            sed -n 's/^[[:space:]]*sonar\.[A-Za-z0-9.]*[Rr]eportPaths[[:space:]]*[=:][[:space:]]*//p' | tr ',' '\n' |
+            sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep -v '^$' || true)
+          ws=$(realpath -- "$GITHUB_WORKSPACE")
+          while IFS= read -r path; do
+            [ -n "$path" ] || continue
+            case "$path" in
+              /* | -* | *..* | *[*?[]* | .git/* | .scannerwork/* | sonar-project.properties | ./*)
+                echo "::warning::$path in sonar-project.properties is not a plain repo-relative file path, so the scan skips it"
+                continue
+                ;;
+            esac
+            dest=$(realpath -m -- "$path")
+            if [ "${dest#"$ws"/}" = "$dest" ] || [ -L "$path" ]; then
+              echo "::warning::$path leads outside the workspace or through a link, so the scan skips it"
+              continue
+            fi
+            if [ ! -f "$REPORTS/$path" ]; then
+              echo "::warning::check:ci wrote no file at $path, which sonar-project.properties names"
+              continue
+            fi
+            mkdir -p -- "$(dirname -- "$path")"
+            cp --no-dereference --remove-destination -- "$REPORTS/$path" "$path"
+          done <<<"$paths"
+
+      - id: types
+        name: Download the type files
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          name: sonar-types
+          path: ${{ runner.temp }}/sonar-types
+
+      # Only a type file the checkout lacks leaves the artifact, so no file the repo commits is ever replaced.
+      - name: Put the type files in place
+        env:
+          TYPES: ${{ runner.temp }}/sonar-types
+          DOWNLOAD: ${{ steps.types.outcome }}
+        run: |
+          set -euo pipefail
+          if [ ! -d "$TYPES" ]; then
+            [ "$DOWNLOAD" != failure ] || echo "::warning::No type files arrived, so SonarJS reads TypeScript untyped and may report false issues"
+            exit 0
+          fi
+          ws=$(realpath -- "$GITHUB_WORKSPACE")
+          placed=0
+          while IFS= read -r -d '' source; do
+            path=${source#"$TYPES"/}
+            case "$path" in
+              -* | *..* | .git/* | .scannerwork/*) continue ;;
+              *.d.ts | *.d.mts | *.d.cts | *tsconfig*.json | *node_modules/*package.json) ;;
+              *) continue ;;
+            esac
+            if [ -e "$path" ] || [ -L "$path" ]; then
+              continue
+            fi
+            dest=$(realpath -m -- "$path")
+            if [ "${dest#"$ws"/}" = "$dest" ]; then
+              continue
+            fi
+            if ! { mkdir -p -- "$(dirname -- "$path")" && cp --no-dereference -- "$source" "$path"; } 2>/dev/null; then
+              echo "::warning::Could not place $path"
+              continue
+            fi
+            placed=$((placed + 1))
+          done < <(find "$TYPES" -type f -size -5M -print0)
+          echo "Placed $placed type files"
+
+      - name: SonarQube scan
+        uses: kk-forge-engineering/gh-actions/sonarqube-scan@v4
         with:
           sonar-token: ${{ secrets.SONAR_TOKEN }}
           sonar-host-url: https://sq.kk-forge.com
-
-      # This step names each failed condition, then the new issues and security hotspots at their file and line, so a
-      # red gate reads without a SonarQube login. The quality gate action says only that the gate failed. The step sends
-      # the repo's token to `SONAR_HOST_URL`, never to the `serverUrl` in `report-task.txt`: the repo's own tools run
-      # before the scan and can write that file.
-      - name: Show why the quality gate failed
-        if: ${{ !cancelled() && steps.sonar.outcome == 'failure' && hashFiles('.scannerwork/report-task.txt') != '' }}
-        uses: actions/github-script@v9
-        # The step pins host and token in its own env, which wins over a `GITHUB_ENV` the repo's tools could
-        # have written.
-        env:
-          SONAR_HOST_URL: https://sq.kk-forge.com
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        with:
-          script: |
-            const report = require('fs').readFileSync('.scannerwork/report-task.txt', 'utf8');
-            const field = (key) => report.match(new RegExp(`^${key}=(.*)$`, 'm'))?.[1];
-            const get = async (path, query, { isForbiddenOk = false } = {}) => {
-              const url = `${process.env.SONAR_HOST_URL}${path}?${new URLSearchParams(query)}`;
-              const response = await fetch(url, { headers: { Authorization: `Bearer ${process.env.SONAR_TOKEN}` } });
-              if (isForbiddenOk && response.status === 403) {
-                return null;
-              }
-              if (!response.ok) {
-                throw new Error(`SonarQube answered ${response.status} to ${path}`);
-              }
-              return response.json();
-            };
-            const { task } = await get('/api/ce/task', { id: field('ceTaskId') });
-            if (!task.analysisId) {
-              core.warning(`The analysis task is ${task.status}, so it has no quality gate result to read`);
-              return;
-            }
-            const { projectStatus } = await get('/api/qualitygates/project_status', { analysisId: task.analysisId });
-            for (const condition of projectStatus.conditions.filter((c) => c.status === 'ERROR')) {
-              core.error(`${condition.metricKey} is ${condition.actualValue}, ` +
-                `the gate wants it not ${condition.comparator === 'GT' ? 'above' : 'below'} ${condition.errorThreshold}`);
-            }
-            // A PR analysis holds only the PR's code, so all its issues are new. A branch's new issues are those in
-            // its new code period.
-            const scope = task.pullRequest
-              ? { pullRequest: task.pullRequest }
-              : { branch: task.branch, inNewCodePeriod: true };
-            // A component key is <project key>:<path from the project's base directory, the repo root here>.
-            const file = (component) => component.slice(task.componentKey.length + 1);
-            // The list stops at 100 issues and 100 hotspots and counts what it left out. GitHub turns only a step's
-            // first 10 errors into annotations, and the log keeps the rest.
-            const limit = 100;
-            // Without Browse on the project, hotspots answer 403 while issues answer an empty list, so hotspots are
-            // read first.
-            const hotspots = await get('/api/hotspots/search',
-              { projectKey: task.componentKey, status: 'TO_REVIEW', ps: limit, ...scope }, { isForbiddenOk: true });
-            if (!hotspots) {
-              core.warning(`The SonarQube token may not browse ${task.componentKey}, ` +
-                'so its new issues and hotspots stay in SonarQube');
-              return;
-            }
-            const issues = await get('/api/issues/search',
-              { components: task.componentKey, issueStatuses: 'OPEN,CONFIRMED', ps: limit, ...scope });
-            // Hotspots are few, so they come before issues within GitHub's first 10 annotations.
-            for (const hotspot of hotspots.hotspots) {
-              core.error(`${hotspot.message} (${hotspot.ruleKey}), to review in SonarQube`,
-                { title: `New hotspot ${hotspot.ruleKey}`, file: file(hotspot.component), startLine: hotspot.line });
-            }
-            for (const issue of issues.issues) {
-              core.error(`${issue.message} (${issue.rule})`,
-                { title: `New issue ${issue.rule}`, file: file(issue.component), startLine: issue.line });
-            }
-            const left = issues.paging.total - issues.issues.length + hotspots.paging.total - hotspots.hotspots.length;
-            if (left > 0) {
-              core.warning(`${left} more new issues and hotspots are in SonarQube`);
-            }
