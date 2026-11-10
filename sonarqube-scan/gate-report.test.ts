@@ -72,7 +72,7 @@ const startSonarQube = async ({
             conditions: [
               newCondition('new_violations'),
               ...Array.from({ length: failedConditions - 1 }, (_, i) => newCondition(`metric_${i}`)),
-              { status: 'OK', metricKey: 'new_coverage', comparator: 'LT', actualValue: '90', errorThreshold: '80' },
+              { status: 'OK', metricKey: 'new_coverage', comparator: 'LT', errorThreshold: '80' },
             ],
           },
         };

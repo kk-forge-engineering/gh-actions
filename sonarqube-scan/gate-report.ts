@@ -33,7 +33,8 @@ type ProjectStatusResponse = {
       status: string;
       metricKey: string;
       comparator: string;
-      actualValue: string;
+      // SonarQube leaves out the value of a condition it could not measure.
+      actualValue?: string;
       errorThreshold: string;
     }[];
   };
@@ -118,7 +119,7 @@ const readProjectStatusResponse = (body: unknown): ProjectStatusResponse => ({
       status: readText(condition, 'status'),
       metricKey: readText(condition, 'metricKey'),
       comparator: readText(condition, 'comparator'),
-      actualValue: readText(condition, 'actualValue'),
+      actualValue: readOptionalText(condition, 'actualValue'),
       errorThreshold: readText(condition, 'errorThreshold'),
     })),
   },
