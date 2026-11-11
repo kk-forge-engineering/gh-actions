@@ -60,8 +60,12 @@ jobs:
         if: runner.os == 'Linux'
         run: ldconfig -p | grep -q libatomic.so.1 || { sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends libatomic1; }
 
+      # The pins float on their major, and a cache older than a day would hold back a patch release, security fixes
+      # included.
       - name: Install the tools from mise.toml
         uses: jdx/mise-action@v5
+        with:
+          cache_max_age_days: 1
 
       - run: mise run setup
 
