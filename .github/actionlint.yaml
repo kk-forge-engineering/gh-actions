@@ -1,4 +1,6 @@
 self-hosted-runner:
-  # The kk-forge runner, which private repos' CI and releases run on.
   labels:
+    # The kk-forge runner, which private repos' CI and releases run on.
     - swarm
+    # A GitHub-hosted image actionlint 1.7.12 does not list yet.
+    - ubuntu-26.04
