@@ -156,7 +156,7 @@ jobs:
       # disk while it runs.
       - name: Expose the cache token to buildx
         if: ${{ steps.free.outputs.release == 'true' && env.SHOULD_USE_GHA_CACHE == 'true' }}
-        uses: crazy-max/ghaction-github-runtime@v3
+        uses: crazy-max/ghaction-github-runtime@v4
 
       - name: Log in to dr.kk-forge.com
         if: ${{ steps.free.outputs.release == 'true' }}
