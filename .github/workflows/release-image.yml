@@ -35,7 +35,7 @@ jobs:
   version:
     # A public repo never runs on the kk-forge runner, as in ci.yml: a pull request from a fork would run someone
     # else's code on the kk-forge server. So a public repo runs on a hosted runner.
-    runs-on: ${{ github.event.repository.private && fromJSON('["self-hosted","swarm"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ github.event.repository.private && fromJSON('["self-hosted","swarm"]') || 'ubuntu-latest' }}
     permissions:
       contents: read
     outputs:
@@ -105,7 +105,7 @@ jobs:
   release:
     needs: version
     if: ${{ needs.version.outputs.release == 'true' }}
-    runs-on: ${{ github.event.repository.private && fromJSON('["self-hosted","swarm"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ github.event.repository.private && fromJSON('["self-hosted","swarm"]') || 'ubuntu-latest' }}
     # One dev and one stable release run at a time. GitHub drops an older pending run when a newer one joins the group.
     concurrency:
       group: release-${{ github.repository }}-${{ inputs.dev && 'dev' || 'stable' }}

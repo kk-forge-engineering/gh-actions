@@ -20,7 +20,7 @@ jobs:
     runs-on: >-
       ${{ github.event.repository.private
       && (!github.event.pull_request || github.event.pull_request.head.repo.full_name == github.repository)
-      && fromJSON('["self-hosted","swarm"]') || 'ubuntu-24.04' }}
+      && fromJSON('["self-hosted","swarm"]') || 'ubuntu-latest' }}
     # A newer run of the same event and ref makes this one moot. A push never cancels a `workflow_dispatch` run on
     # its branch: the caller's dev release needs this job and would be cancelled with it.
     concurrency:
@@ -113,7 +113,7 @@ jobs:
     # head is outside the repo gets no secrets, so it skips the scan too. The condition stays on one line: GitHub missed
     # `!cancelled()` in a folded one and skipped the scan after every red check:ci.
     if: ${{ !cancelled() && needs.ci.result != 'cancelled' && needs.ci.outputs.has-reports == 'true' && (!github.event.pull_request || github.event.pull_request.head.repo.full_name == github.repository) }}
-    runs-on: ${{ github.event.repository.private && fromJSON('["self-hosted","swarm"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ github.event.repository.private && fromJSON('["self-hosted","swarm"]') || 'ubuntu-latest' }}
     concurrency:
       group: sonar-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
       cancel-in-progress: true
