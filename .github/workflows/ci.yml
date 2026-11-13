@@ -7,11 +7,12 @@ on:
     secrets:
       SONAR_TOKEN:
         required: false
+  # A branch runs CI through its PR, once per push, and SonarQube analyses it as that PR. main runs it on its own
+  # push: SonarQube compares each PR with main's analysis.
   push:
-    branches: ["**"]
-  # The same PR trigger README.md gives callers: a PR opened after its last push gets its SonarQube PR analysis.
+    branches: [main]
   pull_request:
-    types: [opened, reopened]
+    types: [opened, synchronize, reopened]
 
 jobs:
   ci:

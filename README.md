@@ -4,14 +4,14 @@ Reusable GitHub workflows and actions. Pin them to the major tag, such as `@v4`.
 
 ## Workflows
 
-- [CI](/.github/workflows/ci.yml) installs a repo's tools from `mise.toml`, runs `mise run setup` and `mise run check:ci`, then [SonarQube scan](/sonarqube-scan) when the repo has a `sonar-project.properties`, even after a red `check:ci`. Such a repo's `check:ci` writes the coverage reports its `sonar-project.properties` names in `*reportPaths` and `*ReportPaths` keys, each a plain repo-relative file path. Its caller passes `SONAR_TOKEN`. The scan runs in a job of its own that runs none of the repo's tools and alone holds the token. The reports, and the type files `setup` leaves for SonarJS, reach it as artifacts. A private repo runs on the self-hosted runner. A public repo, or a PR whose head is outside the repo, runs on a hosted runner. The workflow reads the visibility from the event's repository, so call it from `push`, `pull_request` or `workflow_dispatch`. SonarQube analyses a push to a branch with an open PR as that PR. For a PR opened after its last push, the caller also triggers on `pull_request` `opened` and `reopened`, as below. A PR whose head is outside the repo gets no secrets, so it skips the scan. The caller:
+- [CI](/.github/workflows/ci.yml) installs a repo's tools from `mise.toml`, runs `mise run setup` and `mise run check:ci`, then [SonarQube scan](/sonarqube-scan) when the repo has a `sonar-project.properties`, even after a red `check:ci`. Such a repo's `check:ci` writes the coverage reports its `sonar-project.properties` names in `*reportPaths` and `*ReportPaths` keys, each a plain repo-relative file path. Its caller passes `SONAR_TOKEN`. The scan runs in a job of its own that runs none of the repo's tools and alone holds the token. The reports, and the type files `setup` leaves for SonarJS, reach it as artifacts. A private repo runs on the self-hosted runner. A public repo, or a PR whose head is outside the repo, runs on a hosted runner. The workflow reads the visibility from the event's repository, so call it from `push`, `pull_request` or `workflow_dispatch`. The caller runs it on a push to `main` and on a PR's `opened`, `synchronize` and `reopened`, as below, so each push to a PR runs it once, as that PR's SonarQube analysis. A manual run on a branch with an open PR is analysed as that PR too. A PR whose head is outside the repo gets no secrets, so it skips the scan. The caller:
   ```yaml
   name: CI
   on:
     push:
-      branches: ["**"]
+      branches: [main]
     pull_request:
-      types: [opened, reopened]
+      types: [opened, synchronize, reopened]
   jobs:
     ci:
       uses: kk-forge-engineering/gh-actions/.github/workflows/ci.yml@v4
@@ -63,4 +63,4 @@ project-orchestration deploys the references a Release lists ([Release and deplo
 
 ## Checks
 
-`mise run check` runs the linters and tests in [mise.toml](/mise.toml). The tests run [gate-report.ts](/sonarqube-scan/gate-report.ts) against a fake SonarQube. The CI workflow runs `mise run check:ci` on every push to this repo. `mise run setup` installs `tsc` and the Node types.
+`mise run check` runs the linters and tests in [mise.toml](/mise.toml). The tests run [gate-report.ts](/sonarqube-scan/gate-report.ts) against a fake SonarQube. The CI workflow runs `mise run check:ci` on every push to a PR of this repo and to `main`. `mise run setup` installs `tsc` and the Node types.
