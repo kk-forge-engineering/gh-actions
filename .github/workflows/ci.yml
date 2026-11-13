@@ -14,6 +14,11 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
 
+env:
+  # Unless minimum_release_age is set, mise hides a version released lately, so a pin floating on its major, such as
+  # go-lint "1", finds no version right after our own release. kk-forge waits on no release, here as on each machine.
+  MISE_MINIMUM_RELEASE_AGE: "0"
+
 jobs:
   ci:
     # A public repo, or a PR whose head is outside the repo, never runs on the kk-forge runner: it would run someone

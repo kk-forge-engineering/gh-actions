@@ -5,6 +5,11 @@ name: Release npm
 on:
   workflow_call:
 
+env:
+  # Unless minimum_release_age is set, mise hides a version released lately, so a pin floating on its major, such as
+  # go-lint "1", finds no version right after our own release. kk-forge waits on no release, here as on each machine.
+  MISE_MINIMUM_RELEASE_AGE: "0"
+
 # Releases of a repo run one at a time, so a run that waited finds the tag the run before it created.
 concurrency:
   group: release-npm-${{ github.repository }}
