@@ -12,8 +12,8 @@ runs:
   using: "composite"
   steps:
     # The scanner reads the repo's sonar-project.properties and takes these properties on top, as JSON in
-    # SONARQUBE_SCANNER_PARAMS. A PR event, or a push to a branch with an open PR, is analysed as that PR, so
-    # SonarQube decorates it.
+    # SONARQUBE_SCANNER_PARAMS. A PR event, or a manual run on a branch with an open PR, is analysed as that PR,
+    # so SonarQube decorates it.
     - name: Name the branch or PR
       uses: actions/github-script@v9
       env:
