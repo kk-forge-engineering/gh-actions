@@ -6,7 +6,7 @@ on:
   workflow_call:
     inputs:
       apt-packages:
-        description: Ubuntu packages the repo's tools need, separated by spaces, such as `libwebkit2gtk-4.1-dev libxcb1-dev`
+        description: Ubuntu packages the repo's tools need, separated by spaces or lines, such as `libwebkit2gtk-4.1-dev libxcb1-dev`
         type: string
         default: ""
     secrets:
@@ -87,9 +87,10 @@ jobs:
           APT_PACKAGES: ${{ inputs.apt-packages }}
           DEBIAN_FRONTEND: noninteractive
         run: |
-          read -ra packages <<<"$APT_PACKAGES"
+          # -d "" reads every line, so a list written one package per line installs whole. read returns 1 at the end.
+          read -r -d "" -a packages <<<"$APT_PACKAGES" || true
           sudo apt-get update -qq
-          sudo --preserve-env=DEBIAN_FRONTEND apt-get install -y -qq -- "${packages[@]}"
+          sudo --preserve-env=DEBIAN_FRONTEND apt-get install -y -qq --no-install-recommends -- "${packages[@]}"
 
       - run: mise run setup
 
