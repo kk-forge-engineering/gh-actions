@@ -32,6 +32,10 @@ const calls = path.join(dir, 'sudo-calls');
 // The fake sudo writes each call on its own line, its arguments separated by spaces.
 writeFileSync(path.join(dir, 'sudo'), `#!/bin/sh\necho "$*" >> "${calls}"\n`);
 chmodSync(path.join(dir, 'sudo'), 0o755);
+// The fake apt-cache knows these packages, and pkgnames lists them one per line, as apt-cache does.
+const KNOWN = ['libwebkit2gtk-4.1-dev', 'libxcb1-dev', 'libwayland-dev', 'libyaml-dev', 'g++', 'libstdc++6', 'lib.x', '0ad'];
+writeFileSync(path.join(dir, 'apt-cache'), `#!/bin/sh\nprintf '%s\\n' ${KNOWN.join(' ')}\n`);
+chmodSync(path.join(dir, 'apt-cache'), 0o755);
 
 /** Runs the step as GitHub runs a bash `run:`, and returns its exit status, output and sudo calls. */
 const runStep = (packages: string) => {
@@ -78,8 +82,17 @@ test('calls no apt for a list of only spaces', () => {
   assert.deepEqual(sudo, []);
 });
 
-// Each of these apt reads as something other than a package to install: `pkg-` removes it, `pkg=1.0` pins a version,
-// `pkg:arch` names an architecture, `pkg/suite` a release, a path a local .deb, and a leading `-` an option.
+// apt-get would read the dot as any character and install libyaml-dev with every other package the name matches.
+test('fails before installing a name apt knows no package by exactly', () => {
+  const { status, stdout, sudo } = runStep('libxcb1-dev libyaml.dev');
+  assert.equal(status, 1);
+  assert.deepEqual(sudo, ['apt-get update -qq'], 'apt installed although a name matches no package exactly');
+  assert.match(stdout, /^::error title=apt-packages::apt knows no package named exactly 'libyaml\.dev'\.$/m);
+});
+
+// The grammar of a Debian package name rejects each of these. apt reads the first six as something other than a
+// package to install: `pkg-` as a removal, `pkg=1.0` as a version, `pkg:arch` as an architecture, `pkg/suite` as a
+// release, a path as a local .deb and a leading `-` as an option. Debian allows no capital and no one-letter name.
 for (const bad of ['pkg-', 'pkg=1.0', 'pkg:amd64', 'pkg/noble', './x.deb', '-o', 'Libfoo', 'x']) {
   test(`fails before apt on '${bad}'`, () => {
     const { status, stdout, sudo } = runStep(`libxcb1-dev ${bad} libwayland-dev`);

@@ -74,14 +74,17 @@ jobs:
       # A repo whose tools build against system libraries, such as a Tauri desktop app's webkit2gtk, names them in
       # apt-packages. They go in before mise installs the tools, since mise builds some from source against them, such
       # as Ruby against libssl-dev and libyaml-dev. The names pass through env, never into the script. Each name must
-      # match Debian's grammar for a package name, because apt reads `pkg-`, `pkg=1.0`, `pkg:arch` and `./x.deb` as
-      # actions or other sources, and `--` keeps a name from reading as an apt option.
+      # match Debian's grammar for a package name, because apt reads `pkg-` as a removal, `pkg=1.0` as a version,
+      # `pkg:arch` as an architecture, `pkg/suite` as a release and `./x.deb` as a local file. apt-get also reads a
+      # name with a dot that matches no package as a regular expression, so `libyaml.dev` would install every package
+      # it matches, and each name must also be one apt knows exactly. After both checks `--` is only a backstop.
       - name: Install the apt packages the caller names
         if: ${{ runner.os == 'Linux' && inputs.apt-packages != '' }}
         env:
           APT_PACKAGES: ${{ inputs.apt-packages }}
           DEBIAN_FRONTEND: noninteractive
         run: |
+          set -euo pipefail
           # -d "" reads every line, so a list written one package per line installs whole. read returns 1 at the end.
           read -r -d "" -a packages <<<"$APT_PACKAGES" || true
           name='^[a-z0-9][a-z0-9.+-]*[a-z0-9.+]$'
@@ -93,6 +96,13 @@ jobs:
           done
           if [[ ${#packages[@]} -eq 0 ]]; then exit 0; fi
           sudo apt-get update -qq
+          known=$(apt-cache pkgnames)
+          for package in "${packages[@]}"; do
+            if ! grep -Fxq -- "$package" <<<"$known"; then
+              echo "::error title=apt-packages::apt knows no package named exactly '$package'."
+              exit 1
+            fi
+          done
           sudo --preserve-env=DEBIAN_FRONTEND apt-get install -y -qq --no-install-recommends -- "${packages[@]}"
 
       # The pins float on their major, and a cache older than a day would hold back a patch release, security fixes
