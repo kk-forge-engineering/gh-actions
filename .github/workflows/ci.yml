@@ -80,7 +80,8 @@ jobs:
 
       # A repo whose tools build against system libraries, such as a Tauri desktop app's webkit2gtk, names them in
       # apt-packages. They go in before setup, which may already build against them. The names pass through env, never
-      # into the script, and `--` keeps a name from reading as an apt option.
+      # into the script. Each name must match Debian's grammar for a package name, because apt reads `pkg-`, `pkg=1.0`,
+      # `pkg:arch` and `./x.deb` as actions or other sources, and `--` keeps a name from reading as an apt option.
       - name: Install the apt packages the caller names
         if: ${{ runner.os == 'Linux' && inputs.apt-packages != '' }}
         env:
@@ -89,6 +90,14 @@ jobs:
         run: |
           # -d "" reads every line, so a list written one package per line installs whole. read returns 1 at the end.
           read -r -d "" -a packages <<<"$APT_PACKAGES" || true
+          name='^[a-z0-9][a-z0-9.+-]*[a-z0-9.+]$'
+          for package in "${packages[@]}"; do
+            if [[ ! $package =~ $name ]]; then
+              echo "::error title=apt-packages::'$package' is not a Debian package name. Name each package bare, without a version, an architecture, a path or a trailing -."
+              exit 1
+            fi
+          done
+          if [[ ${#packages[@]} -eq 0 ]]; then exit 0; fi
           sudo apt-get update -qq
           sudo --preserve-env=DEBIAN_FRONTEND apt-get install -y -qq --no-install-recommends -- "${packages[@]}"
 
