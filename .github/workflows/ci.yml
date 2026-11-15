@@ -77,7 +77,8 @@ jobs:
       # match Debian's grammar for a package name, because apt reads `pkg-` as a removal, `pkg=1.0` as a version,
       # `pkg:arch` as an architecture, `pkg/suite` as a release and `./x.deb` as a local file. apt-get also reads a
       # name with a dot that matches no package as a regular expression, so `libyaml.dev` would install every package
-      # it matches, and each name must also be one apt knows exactly. After both checks `--` is only a backstop.
+      # it matches. Each name must also be one apt knows exactly, as a package or as a name a package provides, which
+      # `apt-cache --all-names pkgnames` lists. After both checks `--` is only a backstop.
       - name: Install the apt packages the caller names
         if: ${{ runner.os == 'Linux' && inputs.apt-packages != '' }}
         env:
@@ -87,6 +88,8 @@ jobs:
           set -euo pipefail
           # -d "" reads every line, so a list written one package per line installs whole. read returns 1 at the end.
           read -r -d "" -a packages <<<"$APT_PACKAGES" || true
+          # An empty list leaves first: the tests run this under macOS's bash 3.2, whose set -u fails a loop over no items.
+          if [[ ${#packages[@]} -eq 0 ]]; then exit 0; fi
           name='^[a-z0-9][a-z0-9.+-]*[a-z0-9.+]$'
           for package in "${packages[@]}"; do
             if [[ ! $package =~ $name ]]; then
@@ -94,9 +97,8 @@ jobs:
               exit 1
             fi
           done
-          if [[ ${#packages[@]} -eq 0 ]]; then exit 0; fi
           sudo apt-get update -qq
-          known=$(apt-cache pkgnames)
+          known=$(apt-cache --all-names pkgnames)
           for package in "${packages[@]}"; do
             if ! grep -Fxq -- "$package" <<<"$known"; then
               echo "::error title=apt-packages::apt knows no package named exactly '$package'."

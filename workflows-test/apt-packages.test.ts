@@ -32,9 +32,14 @@ const calls = path.join(dir, 'sudo-calls');
 // The fake sudo writes each call on its own line, its arguments separated by spaces.
 writeFileSync(path.join(dir, 'sudo'), `#!/bin/sh\necho "$*" >> "${calls}"\n`);
 chmodSync(path.join(dir, 'sudo'), 0o755);
-// The fake apt-cache knows these packages, and pkgnames lists them one per line, as apt-cache does.
+// The fake apt-cache lists these packages one per line, as `apt-cache pkgnames` does, and adds a name only a
+// package provides, such as zlib1g-dev's libz-dev, only under --all-names, as apt-cache does.
 const KNOWN = ['libwebkit2gtk-4.1-dev', 'libxcb1-dev', 'libwayland-dev', 'libyaml-dev', 'g++', 'libstdc++6', 'lib.x', '0ad'];
-writeFileSync(path.join(dir, 'apt-cache'), `#!/bin/sh\nprintf '%s\\n' ${KNOWN.join(' ')}\n`);
+const PROVIDED = ['libz-dev'];
+writeFileSync(
+  path.join(dir, 'apt-cache'),
+  `#!/bin/sh\nprintf '%s\\n' ${KNOWN.join(' ')}\n[ "$1" = --all-names ] && printf '%s\\n' ${PROVIDED.join(' ')}\nexit 0\n`,
+);
 chmodSync(path.join(dir, 'apt-cache'), 0o755);
 
 /** Runs the step as GitHub runs a bash `run:`, and returns its exit status, output and sudo calls. */
@@ -80,6 +85,12 @@ test('calls no apt for a list of only spaces', () => {
   const { status, sudo } = runStep('  \n ');
   assert.equal(status, 0);
   assert.deepEqual(sudo, []);
+});
+
+test('installs a name a package provides', () => {
+  const { status, sudo } = runStep('libz-dev');
+  assert.equal(status, 0);
+  assert.equal(sudo.at(-1), `--preserve-env=DEBIAN_FRONTEND ${INSTALL} libz-dev`);
 });
 
 // apt-get would read the dot as any character and install libyaml-dev with every other package the name matches.
