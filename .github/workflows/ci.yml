@@ -4,6 +4,11 @@ name: CI
 
 on:
   workflow_call:
+    inputs:
+      apt-packages:
+        description: Ubuntu packages the repo's tools need, separated by spaces, such as `libwebkit2gtk-4.1-dev libxcb1-dev`
+        type: string
+        default: ""
     secrets:
       SONAR_TOKEN:
         required: false
@@ -72,6 +77,19 @@ jobs:
         uses: jdx/mise-action@v5
         with:
           cache_max_age_days: 1
+
+      # A repo whose tools build against system libraries, such as a Tauri desktop app's webkit2gtk, names them in
+      # apt-packages. They go in before setup, which may already build against them. The names pass through env, never
+      # into the script, and `--` keeps a name from reading as an apt option.
+      - name: Install the apt packages the caller names
+        if: ${{ runner.os == 'Linux' && inputs.apt-packages != '' }}
+        env:
+          APT_PACKAGES: ${{ inputs.apt-packages }}
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          read -ra packages <<<"$APT_PACKAGES"
+          sudo apt-get update -qq
+          sudo --preserve-env=DEBIAN_FRONTEND apt-get install -y -qq -- "${packages[@]}"
 
       - run: mise run setup
 
