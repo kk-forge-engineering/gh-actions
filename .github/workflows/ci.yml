@@ -4,6 +4,11 @@ name: CI
 
 on:
   workflow_call:
+    inputs:
+      apt-packages:
+        description: Ubuntu packages the repo's tools need, separated by spaces or lines, such as `libwebkit2gtk-4.1-dev libxcb1-dev`
+        type: string
+        default: ""
     secrets:
       SONAR_TOKEN:
         required: false
@@ -65,6 +70,36 @@ jobs:
       - name: Install libatomic1
         if: runner.os == 'Linux'
         run: ldconfig -p | grep -q libatomic.so.1 || { sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends libatomic1; }
+
+      # Packages for tools mise builds from source, so they go in before mise. Names are checked strictly: apt reads
+      # some forms as actions or regexes, so only a name apt knows exactly gets through.
+      - name: Install the apt packages the caller names
+        if: ${{ runner.os == 'Linux' && inputs.apt-packages != '' }}
+        env:
+          APT_PACKAGES: ${{ inputs.apt-packages }}
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          set -euo pipefail
+          # -d "" reads every line of the list; read returns 1 at its end.
+          read -r -d "" -a packages <<<"$APT_PACKAGES" || true
+          # Leave before any loop: macOS's bash 3.2, which runs the tests, fails set -u on a loop over no items.
+          if [[ ${#packages[@]} -eq 0 ]]; then exit 0; fi
+          name='^[a-z0-9][a-z0-9.+-]*[a-z0-9.+]$'
+          for package in "${packages[@]}"; do
+            if [[ ! $package =~ $name ]]; then
+              echo "::error title=apt-packages::'$package' is not a Debian package name. Name each package bare, without a version, an architecture, a path or a trailing -."
+              exit 1
+            fi
+          done
+          sudo apt-get update -qq
+          known=$(apt-cache --all-names pkgnames)
+          for package in "${packages[@]}"; do
+            if ! grep -Fxq -- "$package" <<<"$known"; then
+              echo "::error title=apt-packages::apt knows no package named exactly '$package'."
+              exit 1
+            fi
+          done
+          sudo --preserve-env=DEBIAN_FRONTEND apt-get install -y -qq --no-install-recommends -- "${packages[@]}"
 
       # The pins float on their major, and a cache older than a day would hold back a patch release, security fixes
       # included.
