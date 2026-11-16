@@ -118,6 +118,9 @@ jobs:
       - id: upload
         name: Upload the coverage reports
         if: ${{ !cancelled() && steps.check.outcome != 'skipped' && steps.reports.outcome == 'success' }}
+        # A failed upload skips the scan and leaves check:ci's result as it is. The upload fails when the artifact
+        # storage quota is full.
+        continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
           name: sonar-reports
@@ -146,6 +149,10 @@ jobs:
           include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 7
+
+      - name: Warn that SonarQube skips this run
+        if: ${{ !cancelled() && steps.upload.outcome == 'failure' }}
+        run: echo "::warning::The coverage reports failed to upload, so SonarQube skips this run"
 
   # The SonarQube token lives only in this job, which runs none of the repo's tools: setup's third-party install
   # scripts could otherwise reach it through GITHUB_ENV, GITHUB_PATH or a process left running.
