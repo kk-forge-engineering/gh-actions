@@ -123,8 +123,10 @@ jobs:
           name: sonar-reports
           path: ${{ steps.reports.outputs.paths }}
           include-hidden-files: true
-          # A rerun of a red scan, say after marking a false positive in SonarQube, needs the artifact still there.
-          retention-days: 7
+          # This artifact and sonar-types live a day, because the org's free plan allows a monthly average of 0.5 GB of
+          # Actions storage and a week of artifacts took about 4.5 GB. A scan rerun after a day, say after marking a
+          # false positive in SonarQube, has to rerun every job.
+          retention-days: 1
 
       # SonarJS resolves types through what setup installs and generates, such as node_modules and a tsconfig it
       # extends. Without them it reads TypeScript untyped and reports false issues. These files are data the scan only
@@ -145,7 +147,7 @@ jobs:
             !.git/**
           include-hidden-files: true
           if-no-files-found: ignore
-          retention-days: 7
+          retention-days: 1
 
   # The SonarQube token lives only in this job, which runs none of the repo's tools: setup's third-party install
   # scripts could otherwise reach it through GITHUB_ENV, GITHUB_PATH or a process left running.
