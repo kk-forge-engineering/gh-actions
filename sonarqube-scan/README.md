@@ -37,4 +37,4 @@ sonar.coverage.exclusions=packages/backend/src/migrations/*,packages/backend/src
 
 ## Full example
 
-The [CI workflow](/.github/workflows/ci.yml) runs this action in a job of its own, after the repo's `check:ci` in another job. It passes the repo's `SONAR_TOKEN`. Its caller is in the [root README](/README.md#workflows).
+The [CI workflow](/.github/workflows/ci.yml) runs this action at the end of its `ci` job, after the repo's `check:ci`. It passes the repo's `SONAR_TOKEN`. Its caller is in the [root README](/README.md#workflows).

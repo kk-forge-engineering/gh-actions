@@ -37,9 +37,8 @@ jobs:
     concurrency:
       group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
       cancel-in-progress: true
-    # The runner sets a step's outcome, so the repo's tools cannot forge these.
     outputs:
-      sonar: ${{ steps.sonar.outcome }}
+      token: ${{ steps.token.outcome }}
       scan: ${{ steps.scan.outcome }}
     permissions:
       contents: read
@@ -54,19 +53,17 @@ jobs:
           # `setup` runs third-party install scripts, so the token stays out of .git/config.
           persist-credentials: false
 
-      # The scan runs at the end of this job, so a run needs one runner, not two. A PR whose head is outside the repo
-      # gets no secrets, so it skips the scan. A missing token fails `ci / sonar`, not `ci / ci`.
-      - id: sonar
+      # A PR whose head is outside the repo gets no secrets, so it skips this check and the scan. A missing token
+      # fails `ci / sonar`, not `ci / ci`. The token reaches only this step and the scan, but setup's install scripts
+      # run earlier in this job and can still reach it through GITHUB_ENV, GITHUB_PATH or a process left running. The
+      # token is the repo's own, with Scan and Browse on its own SonarQube project, so the second runner it saves wins.
+      - id: token
         name: Check the SonarQube token
         if: ${{ hashFiles('sonar-project.properties') != '' && (!github.event.pull_request || github.event.pull_request.head.repo.full_name == github.repository) }}
         continue-on-error: true
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        run: |
-          if [ -z "$SONAR_TOKEN" ]; then
-            echo "::error::sonar-project.properties exists, but the caller passed no SONAR_TOKEN"
-            exit 1
-          fi
+        run: test -n "$SONAR_TOKEN"
 
       # Node 26's binary links libatomic, which the self-hosted runner's image lacks, so mise fails to install it.
       - name: Install libatomic1
@@ -110,8 +107,8 @@ jobs:
         with:
           cache_max_age_days: 1
 
-      # Every job starts empty, so without these caches each run downloads and builds every Go module and npm package
-      # again. golangci-lint, which go_lint runs, keeps its results in its own folder.
+      # Every job starts on an empty runner, so these caches keep each run from downloading and building every Go
+      # module and npm package again. golangci-lint keeps its results apart from GOCACHE, so its folder is cached too.
       - id: go-paths
         name: Find the Go caches
         if: ${{ hashFiles('**/go.sum') != '' }}
@@ -132,16 +129,18 @@ jobs:
             ${{ steps.go-paths.outputs.mod }}
             ${{ steps.go-paths.outputs.build }}
             ${{ steps.go-paths.outputs.lint }}
-          key: go-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
-          restore-keys: go-${{ runner.os }}-
+          # No prefix fallback: Go trusts the module and build caches without checking them, so a dependency that
+          # wrote into them would outlive the go.sum change that removes it.
+          key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/go.sum') }}
 
       - name: Cache the npm downloads
         if: ${{ hashFiles('**/package-lock.json') != '' }}
         uses: actions/cache@v6
         with:
           path: ~/.npm
-          key: npm-${{ runner.os }}-${{ hashFiles('**/package-lock.json') }}
-          restore-keys: npm-${{ runner.os }}-
+          # npm checks each package against the lockfile's hash, so an older cache is safe to start from.
+          key: npm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: npm-${{ runner.os }}-${{ runner.arch }}-
 
       - run: mise run setup
 
@@ -149,17 +148,18 @@ jobs:
       # fails, and test:ci may die before it writes the coverage reports the scan sends.
       - id: check
         run: mise run --continue-on-error check:ci
-        # With the build cache restored, go test would report a test as passing from an earlier run, though the
-        # database or script it reads changed. Every test runs, as on an empty runner.
+        # go test reuses a cached pass while the files and env vars the test reads stay the same. It cannot see a
+        # database or a file a child process reads, so a restored cache could replay a stale pass. -count=1 runs every
+        # test, as on an empty runner.
         env:
           GOFLAGS: -count=1
 
       # The scan runs after a red check:ci too, so SonarQube's quality gate on new code still judges a pull request in a
       # repo below the coverage floor. A failed setup skips check:ci, and so the scan. A red gate fails `ci / sonar`,
-      # not `ci / ci`. SonarJS resolves types through the node_modules and tsconfig files setup left in place.
+      # not `ci / ci`.
       - id: scan
         name: SonarQube scan
-        if: ${{ !cancelled() && steps.sonar.outcome == 'success' && steps.check.outcome != 'skipped' }}
+        if: ${{ !cancelled() && steps.token.outcome == 'success' && steps.check.outcome != 'skipped' }}
         continue-on-error: true
         timeout-minutes: 30
         uses: kk-forge-engineering/gh-actions/sonarqube-scan@v4
@@ -167,21 +167,22 @@ jobs:
           sonar-token: ${{ secrets.SONAR_TOKEN }}
           sonar-host-url: https://sq.kk-forge.com
 
-  # `ci / sonar` is the check the PRs are gated on, so it reports the scan of the ci job. It only reads that job's
-  # outputs, so it runs on a hosted runner even for a private repo, takes seconds and never waits for the kk-forge one.
+  # `ci / sonar` is the check PRs are gated on, and it reports the ci job's scan. It reads only that job's outputs, so
+  # it runs on a hosted runner for a private repo too and never waits for the kk-forge runner. The condition stays on
+  # one line: GitHub missed `!cancelled()` in a folded one and skipped the job after every red check:ci.
   sonar:
     needs: ci
-    if: ${{ !cancelled() && (needs.ci.outputs.sonar == 'failure' || needs.ci.outputs.scan == 'success' || needs.ci.outputs.scan == 'failure') }}
+    if: ${{ !cancelled() && (needs.ci.outputs.token == 'failure' || needs.ci.outputs.scan == 'success' || needs.ci.outputs.scan == 'failure') }}
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions: {}
     steps:
       - name: Report the SonarQube scan
         env:
-          SONAR: ${{ needs.ci.outputs.sonar }}
+          TOKEN: ${{ needs.ci.outputs.token }}
           SCAN: ${{ needs.ci.outputs.scan }}
         run: |
-          if [ "$SONAR" = failure ]; then
+          if [ "$TOKEN" = failure ]; then
             echo "::error::sonar-project.properties exists, but the caller passed no SONAR_TOKEN"
             exit 1
           fi
