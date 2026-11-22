@@ -54,9 +54,9 @@ jobs:
           persist-credentials: false
 
       # A PR whose head is outside the repo gets no secrets, so it skips this check and the scan. A missing token
-      # fails `ci / sonar`, not `ci / ci`. The token reaches only this step and the scan, but setup's install scripts
-      # run earlier in this job and can still reach it through GITHUB_ENV, GITHUB_PATH or a process left running. The
-      # token is the repo's own, with Scan and Browse on its own SonarQube project, so the second runner it saves wins.
+      # fails `ci / sonar`, not `ci / ci`. Only this step and the scan get the token, but setup and check:ci run before
+      # the scan and can reach it through GITHUB_ENV, GITHUB_PATH or a process left running. That is accepted: the
+      # token scans and browses only the repo's own SonarQube project, and a scan job of its own costs a second runner.
       - id: token
         name: Check the SonarQube token
         if: ${{ hashFiles('sonar-project.properties') != '' && (!github.event.pull_request || github.event.pull_request.head.repo.full_name == github.repository) }}
