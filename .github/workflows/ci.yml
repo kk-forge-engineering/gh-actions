@@ -37,6 +37,8 @@ jobs:
     concurrency:
       group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
       cancel-in-progress: true
+    # The longest normal run, idea-packer's, takes about 45 minutes. A run that hangs frees its runner after an hour.
+    timeout-minutes: 60
     outputs:
       token: ${{ steps.token.outcome }}
       scan: ${{ steps.scan.outcome }}
