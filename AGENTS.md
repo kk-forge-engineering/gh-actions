@@ -9,4 +9,5 @@ For AI agents working in this repository. What the workflows and actions do and 
 - Release image never moves a tag, so a deploy of a version always gets the same image. A person raises the version in the caller's package.
 - Release image runs the caller's tools only in its `version` job, which holds a read-only token. Its `release` job holds the registry token and the write token and runs none of them, so a compromised tool cannot reach either.
 - Release npm runs every job on a hosted runner, whatever the repo's visibility. Its `publish` job must, because npm accepts the OIDC token only from one. The other jobs run there too, so the workflow needs no runner switch and no libatomic step. Only its `publish` job can mint that token, and it runs none of the caller's tools.
+- Release extension runs the caller's tools only in its `build` job, which holds a read-only token. Its `release` job holds the write token, runs none of them and checks the zip's `manifest.json` version against the build job's outputs. It checks out nothing, so it runs on a hosted runner.
 - Add no workflow that deploys: an owner deploys from project-orchestration with Touch ID.
