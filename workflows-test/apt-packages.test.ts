@@ -6,28 +6,12 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, test } from 'node:test';
 
-const STEP = '- name: Install the apt packages the caller names';
-
-/** The step's `run:` block, cut out of ci.yml so the test runs the script CI runs, not a copy. */
-const stepScript = (): string => {
-  const lines = readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8').split('\n');
-  const start = lines.findIndex((line) => line.trim() === STEP);
-  assert.notEqual(start, -1, `ci.yml has no step "${STEP}"`);
-  const run = lines.findIndex((line, i) => i > start && line.trim() === 'run: |');
-  const indent = (line: string): number => line.length - line.trimStart().length;
-  const body: string[] = [];
-  for (const line of lines.slice(run + 1)) {
-    if (line.trim() !== '' && indent(line) <= indent(lines[run])) break;
-    body.push(line);
-  }
-  const margin = indent(body[0]);
-  return body.map((line) => line.slice(margin)).join('\n');
-};
+import { stepScript } from './step.ts';
 
 const dir = mkdtempSync(path.join(tmpdir(), 'apt-packages-'));
 after(() => rmSync(dir, { recursive: true, force: true }));
 const script = path.join(dir, 'step.sh');
-writeFileSync(script, stepScript());
+writeFileSync(script, stepScript('ci.yml', 'Install the apt packages the caller names'));
 const calls = path.join(dir, 'sudo-calls');
 // The fake sudo writes each call on its own line, its arguments separated by spaces.
 writeFileSync(path.join(dir, 'sudo'), `#!/bin/sh\necho "$*" >> "${calls}"\n`);

@@ -55,6 +55,23 @@ Reusable GitHub workflows and actions. Pin them to the major tag, such as `@v4`.
       permissions: { contents: write, id-token: write }
   ```
 
+- [Release extension](/.github/workflows/release-extension.yml) builds a browser extension's production zip and publishes it as a GitHub Release `<tag-prefix>v<version>`, `web-v<version>` by default, for an owner to upload to the Chrome Web Store. A push to the default branch whose version has no tag yet runs the caller's `mise run setup`, then its `zip-task`, and releases the one file that `zip` names. The Release's notes list the pull requests since the last tag of the same prefix. When the tag already exists, the run ends green without a release, and warns when the tag points at another commit. The zip's `manifest.json` must give the version that `version-task` prints, or the run fails. The build runs on the self-hosted runner for a private repo and on a hosted one for a public repo; the release job always runs on a hosted runner. Each input's meaning is in the workflow's `inputs`. What the caller's tasks do:
+  - `version-task` prints the extension's version, X.Y.Z, and nothing else, such as `node -p "require('./package.json').version"` in the extension's folder.
+  - `zip-task` builds the production zip, from dependencies `setup` installed, and publishes nothing.
+
+  The caller runs it as a job of its CI, after `ci`, on the default branch:
+  ```yaml
+    release-extension:
+      needs: ci
+      if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+      uses: kk-forge-engineering/gh-actions/.github/workflows/release-extension.yml@v4
+      permissions: { contents: write }
+      with:
+        version-task: web:version
+        zip-task: web:zip
+        zip: apps/web/.output/*-chrome.zip
+  ```
+
 project-orchestration deploys the references a Release lists ([Release and deploy](https://github.com/kk-forge-engineering/project-orchestration/blob/main/docs/release-and-deploy.md)).
 
 ## Actions
@@ -63,4 +80,4 @@ project-orchestration deploys the references a Release lists ([Release and deplo
 
 ## Checks
 
-`mise run check` runs the linters and tests in [mise.toml](/mise.toml). The tests run [gate-report.ts](/sonarqube-scan/gate-report.ts) against a fake SonarQube, and the apt-packages step of [ci.yml](/.github/workflows/ci.yml) against a fake sudo. The CI workflow runs `mise run check:ci` on every push to a PR of this repo and to `main`. `mise run setup` installs `tsc` and the Node types.
+`mise run check` runs the linters and tests in [mise.toml](/mise.toml). The tests run [gate-report.ts](/sonarqube-scan/gate-report.ts) against a fake SonarQube, the apt-packages step of [ci.yml](/.github/workflows/ci.yml) against a fake sudo, and the steps of [release-extension.yml](/.github/workflows/release-extension.yml) against a fake mise and a fake gh. The CI workflow runs `mise run check:ci` on every push to a PR of this repo and to `main`. `mise run setup` installs `tsc` and the Node types.

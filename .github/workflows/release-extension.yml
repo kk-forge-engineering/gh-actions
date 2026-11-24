@@ -1,0 +1,232 @@
+# Builds a browser extension's production zip with the caller's mise task and publishes it as a GitHub Release
+# `<tag-prefix>v<version>`. The caller's CI calls it as a job (README.md).
+name: Release extension
+
+on:
+  workflow_call:
+    inputs:
+      version-task:
+        description: The caller's mise task that prints the extension's version, X.Y.Z, such as `web:version`
+        type: string
+        required: true
+      zip-task:
+        description: The caller's mise task that builds the production zip, such as `web:zip`
+        type: string
+        required: true
+      zip:
+        description: The path of the zip the zip-task leaves, from the repo root; a glob must match one file, such as `apps/web/.output/*-chrome.zip`
+        type: string
+        required: true
+      tag-prefix:
+        description: Goes before `v<version>` in the tag
+        type: string
+        default: web-
+
+env:
+  # Each warning or error about a taken version ends with this fix.
+  RAISE_VERSION: Raise the version that mise run ${{ inputs.version-task }} prints.
+  # Unless minimum_release_age is set, mise hides a version released lately, so a pin floating on its major, such as
+  # go-lint "1", finds no version right after our own release. kk-forge waits on no release, here as on each machine.
+  MISE_MINIMUM_RELEASE_AGE: "0"
+
+jobs:
+  # The caller's tools run only in this job, which holds no write token.
+  build:
+    # A public repo never runs on the kk-forge runner, as in ci.yml: a pull request from a fork would run someone
+    # else's code on the kk-forge server. So a public repo runs on a hosted runner.
+    runs-on: ${{ github.event.repository.private && fromJSON('["self-hosted","swarm"]') || 'ubuntu-26.04' }}
+    permissions:
+      contents: read
+    outputs:
+      release: ${{ steps.version.outputs.release }}
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+      previous: ${{ steps.version.outputs.previous }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The tags show whether this version is released already, and which release came before it.
+          fetch-depth: 0
+          # `setup` runs third-party install scripts, so the token stays out of .git/config.
+          persist-credentials: false
+
+      # Node 26's binary links libatomic, which the self-hosted runner's image lacks, so mise fails to install it.
+      - name: Install libatomic1
+        if: runner.os == 'Linux'
+        run: ldconfig -p | grep -q libatomic.so.1 || { sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends libatomic1; }
+
+      # This step installs the tools fresh, not from the gha cache, which any workflow of the repo can write.
+      - name: Install the tools from mise.toml
+        uses: jdx/mise-action@v5
+        with:
+          cache: false
+
+      - name: Pick the version
+        id: version
+        env:
+          VERSION_TASK: ${{ inputs.version-task }}
+          TAG_PREFIX: ${{ inputs.tag-prefix }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF" != "refs/heads/$DEFAULT_BRANCH" ]; then
+            echo "::error::An extension release comes from $DEFAULT_BRANCH, not from $GITHUB_REF_NAME"
+            exit 1
+          fi
+          if ! [[ "$VERSION_TASK" =~ ^[A-Za-z0-9][A-Za-z0-9:._-]*$ && "$TAG_PREFIX" =~ ^([a-z0-9][a-z0-9._-]*)?$ ]]; then
+            echo "::error::version-task is a mise task name and tag-prefix is empty or such as web-"
+            exit 1
+          fi
+          version=$(mise run --quiet "$VERSION_TASK")
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::mise run $VERSION_TASK printed «${version}», not one X.Y.Z line"
+            exit 1
+          fi
+          tag="${TAG_PREFIX}v$version"
+          echo "tag=$tag" >>"$GITHUB_OUTPUT"
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+          # A tag never moves. A merge that keeps the version releases nothing and stays green.
+          if tagged=$(git rev-parse -q --verify "refs/tags/$tag^{commit}"); then
+            if [ "$tagged" = "$GITHUB_SHA" ]; then
+              echo "$tag is already released from this commit"
+            else
+              echo "::warning::$tag is already released from ${tagged:0:7}, so this commit releases nothing. $RAISE_VERSION"
+            fi
+            echo "release=false" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # The release notes list the changes since the extension's last release, not the repo's other packages'.
+          previous=$(git describe --tags --abbrev=0 --match "${TAG_PREFIX}v[0-9]*" 2>/dev/null) || previous=""
+          echo "previous=$previous" >>"$GITHUB_OUTPUT"
+          echo "Releasing $tag"
+          echo "release=true" >>"$GITHUB_OUTPUT"
+
+      - name: Install the dependencies
+        if: ${{ steps.version.outputs.release == 'true' }}
+        run: mise run setup
+
+      - name: Build the zip
+        id: zip
+        if: ${{ steps.version.outputs.release == 'true' }}
+        env:
+          ZIP_TASK: ${{ inputs.zip-task }}
+          ZIP: ${{ inputs.zip }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$ZIP_TASK" =~ ^[A-Za-z0-9][A-Za-z0-9:._-]*$ ]]; then
+            echo "::error::zip-task is a mise task name"
+            exit 1
+          fi
+          mise run "$ZIP_TASK"
+          shopt -s nullglob
+          # The glob is unquoted on purpose, so it expands; the input holds one path and no spaces.
+          # shellcheck disable=SC2206
+          zips=($ZIP)
+          if [ "${#zips[@]}" -ne 1 ] || [ ! -f "${zips[0]}" ]; then
+            echo "::error::mise run $ZIP_TASK left ${#zips[@]} files that match $ZIP, not one zip"
+            exit 1
+          fi
+          echo "path=${zips[0]}" >>"$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v7
+        if: ${{ steps.version.outputs.release == 'true' }}
+        with:
+          name: extension
+          path: ${{ steps.zip.outputs.path }}
+          if-no-files-found: error
+          # WXT writes the zip into .output, which the action skips as hidden unless told otherwise.
+          include-hidden-files: true
+          # The release job reads it in the same run.
+          retention-days: 1
+
+  # This job runs none of the caller's code and checks out nothing, so it runs on a hosted runner, for a private repo
+  # too, and never waits for the kk-forge runner.
+  release:
+    needs: build
+    if: ${{ needs.build.outputs.release == 'true' }}
+    runs-on: ubuntu-26.04
+    # Releases of a repo run one at a time. GitHub drops an older pending run when a newer one joins the group.
+    concurrency:
+      group: release-extension-${{ github.repository }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ needs.build.outputs.tag }}
+      VERSION: ${{ needs.build.outputs.version }}
+      PREVIOUS: ${{ needs.build.outputs.previous }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: extension
+          path: extension
+
+      # The build job ran the caller's tools and could have written any of its outputs, so this step checks them and
+      # the zip again.
+      - name: Check the zip
+        id: zip
+        env:
+          TAG_PREFIX: ${{ inputs.tag-prefix }}
+          VERSION_TASK: ${{ inputs.version-task }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$TAG" == "${TAG_PREFIX}v$VERSION" ]]; then
+            echo "::error::The build job passed «${VERSION}» and «${TAG}»"
+            exit 1
+          fi
+          if [ -n "$PREVIOUS" ] && ! [[ "${PREVIOUS:0:${#TAG_PREFIX}+1}" == "${TAG_PREFIX}v" && "${PREVIOUS:${#TAG_PREFIX}+1}" =~ ^[0-9][0-9A-Za-z.-]*$ ]]; then
+            echo "::error::The build job passed «${PREVIOUS}» as the previous release"
+            exit 1
+          fi
+          shopt -s nullglob
+          zips=(extension/*.zip)
+          if [ "${#zips[@]}" -ne 1 ]; then
+            echo "::error::The build left ${#zips[@]} zips, not one"
+            exit 1
+          fi
+          if ! manifest=$(unzip -p "${zips[0]}" manifest.json); then
+            echo "::error::The zip holds no manifest.json at its root"
+            exit 1
+          fi
+          packed=$(jq -r .version <<<"$manifest")
+          if [ "$packed" != "$VERSION" ]; then
+            echo "::error::The zip's manifest.json gives the version «${packed}», not $VERSION. mise run $VERSION_TASK and the build read different versions."
+            exit 1
+          fi
+          echo "path=${zips[0]}" >>"$GITHUB_OUTPUT"
+
+      # A run that waited for the group may find its tag released by the run before it.
+      - name: Check the version is still free
+        id: free
+        run: |
+          set -euo pipefail
+          if ref=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq '.object.type + " " + .object.sha' 2>"$RUNNER_TEMP/ref.err"); then
+            read -r type tagged <<<"$ref"
+            # An annotated tag points at a tag object, which points at the commit.
+            [ "$type" != tag ] || tagged=$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$tagged" --jq .object.sha)
+            if [ "$tagged" = "$GITHUB_SHA" ]; then
+              echo "$TAG was released from this commit while this run waited"
+            else
+              echo "::warning::$TAG was released from ${tagged:0:7} while this run waited, so this commit releases nothing. $RAISE_VERSION"
+            fi
+            echo "release=false" >>"$GITHUB_OUTPUT"
+          elif grep -q 'HTTP 404' "$RUNNER_TEMP/ref.err"; then
+            echo "release=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "::error::Could not check the tag $TAG: $(cat "$RUNNER_TEMP/ref.err")"
+            exit 1
+          fi
+
+      # The Release API creates the tag on this commit, so no step runs git with the write token.
+      - name: Publish the release
+        if: ${{ steps.free.outputs.release == 'true' }}
+        env:
+          ZIP: ${{ steps.zip.outputs.path }}
+        run: |
+          set -euo pipefail
+          since=()
+          [ -z "$PREVIOUS" ] || since=(--notes-start-tag "$PREVIOUS")
+          url=$(gh release create "$TAG" "$ZIP" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Extension $VERSION" --generate-notes ${since[@]+"${since[@]}"})
+          echo "Released $TAG with ${ZIP##*/}: $url. Upload the zip to the Chrome Web Store." | tee -a "$GITHUB_STEP_SUMMARY"
