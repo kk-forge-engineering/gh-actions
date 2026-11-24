@@ -54,7 +54,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      # Node 26's binary links libatomic, which the self-hosted runner's image lacks, so mise fails to install it.
+      # Node 26's binary links libatomic, which GitHub's actions-runner image lacks, so mise fails to install it.
       - name: Install libatomic1
         if: runner.os == 'Linux'
         run: ldconfig -p | grep -q libatomic.so.1 || { sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends libatomic1; }

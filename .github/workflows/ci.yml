@@ -65,7 +65,7 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: test -n "$SONAR_TOKEN"
 
-      # Node 26's binary links libatomic, which the self-hosted runner's image lacks, so mise fails to install it.
+      # Node 26's binary links libatomic, which GitHub's actions-runner image lacks, so mise fails to install it.
       - name: Install libatomic1
         if: runner.os == 'Linux'
         run: ldconfig -p | grep -q libatomic.so.1 || { sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends libatomic1; }
@@ -91,9 +91,9 @@ jobs:
             fi
           done
           # The kk-forge runner's image already holds the packages its repos name, so the job skips apt and its slow
-          # update. dpkg-query fails when it finds no package by one of the names, and lists any other state as such.
-          states=$(dpkg-query -W -f='${db:Status-Status}\n' -- "${packages[@]}" 2>/dev/null) || states=missing
-          if ! grep -qvx installed <<<"$states"; then
+          # update. dpkg-query fails on a name it knows no package by, and prints a state other than installed for one
+          # removed.
+          if states=$(dpkg-query -W -f='${db:Status-Status}\n' -- "${packages[@]}" 2>/dev/null) && ! grep -qvx installed <<<"$states"; then
             echo "The runner already has every package."
             exit 0
           fi
@@ -128,8 +128,8 @@ jobs:
             echo "lint=${GOLANGCI_LINT_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/golangci-lint}"
           } >>"$GITHUB_OUTPUT"
 
-      # Only main saves it, after check:ci below. A PR's own copy, up to 750 MB, served no other PR and pushed main's
-      # out of the repo's 10 GB of caches.
+      # Only the default branch saves it, after check:ci below. A PR's own copy, up to 750 MB, served no other PR and
+      # pushed the default branch's out of the repo's 10 GB of caches.
       - id: go-cache
         name: Restore the Go modules and builds
         if: ${{ steps.go-paths.outputs.mod != '' }}
