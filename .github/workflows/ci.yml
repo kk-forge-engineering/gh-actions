@@ -91,15 +91,13 @@ jobs:
           system=$({ cat /etc/os-release 2>/dev/null || true; uname -m; printf '%s\n' "${packages[@]}" | sort -u; } | cksum)
           echo "key=apt-${system%% *}-week$(($(date +%s) / 604800))" >>"$GITHUB_OUTPUT"
 
-      # apt keeps its indexes and downloads in this folder, which actions/cache saves without apt's root-only locks.
+      # apt keeps its indexes and downloads in this folder.
       - name: Restore the apt packages
         id: apt-cache
         if: runner.os == 'Linux'
         uses: actions/cache/restore@v6
         with:
-          path: |
-            ${{ runner.temp }}/apt
-            !${{ runner.temp }}/apt/*/lock
+          path: ${{ runner.temp }}/apt
           key: ${{ steps.apt.outputs.key }}
 
       - name: Install the apt packages
@@ -127,15 +125,15 @@ jobs:
             fi
           done
           sudo --preserve-env=DEBIAN_FRONTEND apt-get "${apt[@]}" install -y -qq --no-install-recommends -- "${packages[@]}"
+          # apt leaves root-only lock files there, which actions/cache could not read to save the folder.
+          sudo chown -R "$(id -u):$(id -g)" "$APT_DIR"
 
       # Only the default branch saves it, as with the Go caches.
       - name: Save the apt packages
         if: ${{ runner.os == 'Linux' && steps.apt-cache.outputs.cache-hit != 'true' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
         uses: actions/cache/save@v6
         with:
-          path: |
-            ${{ runner.temp }}/apt
-            !${{ runner.temp }}/apt/*/lock
+          path: ${{ runner.temp }}/apt
           key: ${{ steps.apt.outputs.key }}
 
       # The pins float on their major, and a cache older than a day would hold back a patch release, security fixes

@@ -58,6 +58,7 @@ const key = (callerPackages: string): string => {
 const APT = `-o Dir::State::Lists=${aptDir}/lists -o Dir::Cache::Archives=${aptDir}/archives -o APT::Keep-Downloaded-Packages=true -o APT::Sandbox::User=root`;
 const UPDATE = `apt-get ${APT} update -qq`;
 const INSTALL = `--preserve-env=DEBIAN_FRONTEND apt-get ${APT} install -y -qq --no-install-recommends -- libatomic1 dirmngr`;
+const CHOWN = `chown -R ${process.getuid?.()}:${process.getgid?.()} ${aptDir}`;
 
 test('keys the cache on the set of packages, whatever their order and spacing', () => {
   assert.equal(key('libxcb1-dev libwayland-dev'), key('libwayland-dev\n  libxcb1-dev\n'));
@@ -67,33 +68,33 @@ test('keys the cache on the set of packages, whatever their order and spacing', 
 test('updates and installs every package on a cache miss', () => {
   const { status, sudo } = installStep('libwebkit2gtk-4.1-dev libxcb1-dev\nlibwayland-dev\n');
   assert.equal(status, 0);
-  assert.deepEqual(sudo, [UPDATE, `${INSTALL} libwebkit2gtk-4.1-dev libxcb1-dev libwayland-dev`]);
+  assert.deepEqual(sudo, [UPDATE, `${INSTALL} libwebkit2gtk-4.1-dev libxcb1-dev libwayland-dev`, CHOWN]);
   assert.ok(existsSync(path.join(aptDir, 'lists', 'partial')) && existsSync(path.join(aptDir, 'archives', 'partial')));
 });
 
 test('installs from the restored folder without an update on a cache hit', () => {
   const { status, sudo } = installStep('libxcb1-dev', 'true');
   assert.equal(status, 0);
-  assert.deepEqual(sudo, [`${INSTALL} libxcb1-dev`]);
+  assert.deepEqual(sudo, [`${INSTALL} libxcb1-dev`, CHOWN]);
 });
 
 test('installs only libatomic1 and dirmngr when the caller names no package', () => {
   const { status, sudo } = installStep('');
   assert.equal(status, 0);
-  assert.equal(sudo.at(-1), INSTALL);
+  assert.equal(sudo.at(-2), INSTALL);
 });
 
 test('accepts the characters Debian allows in a name', () => {
   assert.equal(listStep('g++ libstdc++6 lib.x 0ad').status, 0);
   const { status, sudo } = installStep('g++ libstdc++6 lib.x 0ad');
   assert.equal(status, 0);
-  assert.equal(sudo.at(-1), `${INSTALL} g++ libstdc++6 lib.x 0ad`);
+  assert.equal(sudo.at(-2), `${INSTALL} g++ libstdc++6 lib.x 0ad`);
 });
 
 test('installs a name a package provides', () => {
   const { status, sudo } = installStep('libz-dev');
   assert.equal(status, 0);
-  assert.equal(sudo.at(-1), `${INSTALL} libz-dev`);
+  assert.equal(sudo.at(-2), `${INSTALL} libz-dev`);
 });
 
 // apt-get would read the dot as a regex and install every package it matches.
