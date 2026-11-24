@@ -1,18 +1,24 @@
-# Publishes the package in the repo root to npm under the version in its package.json, then tags v<version> with a
-# GitHub Release. The caller's release.yml calls it on a push to the default branch (README.md).
+# Publishes a package to npm under the version in its package.json, then tags it with a GitHub Release: v<version> for
+# the package in the repo root, <name>-v<version> for one in a folder. The caller calls it on a push to the default
+# branch (README.md).
 name: Release npm
 
 on:
   workflow_call:
+    inputs:
+      package-dir:
+        description: The folder of the package, from the repo root, such as `packages/image-viewer`
+        type: string
+        default: .
 
 env:
   # Unless minimum_release_age is set, mise hides a version released lately, so a pin floating on its major, such as
   # go-lint "1", finds no version right after our own release. kk-forge waits on no release, here as on each machine.
   MISE_MINIMUM_RELEASE_AGE: "0"
 
-# Releases of a repo run one at a time, so a run that waited finds the tag the run before it created.
+# Releases of a package run one at a time, so a run that waited finds the tag the run before it created.
 concurrency:
-  group: release-npm-${{ github.repository }}
+  group: release-npm-${{ github.repository }}-${{ inputs.package-dir }}
   cancel-in-progress: false
 
 jobs:
@@ -23,6 +29,7 @@ jobs:
     outputs:
       name: ${{ steps.version.outputs.name }}
       release: ${{ steps.version.outputs.release }}
+      tag: ${{ steps.version.outputs.tag }}
       version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v7
@@ -35,14 +42,21 @@ jobs:
         id: version
         env:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          PACKAGE_DIR: ${{ inputs.package-dir }}
         run: |
           set -euo pipefail
           if [ "$GITHUB_REF" != "refs/heads/$DEFAULT_BRANCH" ]; then
             echo "::error::A release comes from $DEFAULT_BRANCH, not from $GITHUB_REF_NAME"
             exit 1
           fi
-          name=$(jq -r .name package.json)
-          version=$(jq -r .version package.json)
+          # The folder stays inside the repo: a relative path with no `..` and no leading slash.
+          if ! [[ "$PACKAGE_DIR" =~ ^[A-Za-z0-9_.][A-Za-z0-9_./-]*$ ]] || [[ "/$PACKAGE_DIR/" == */../* ]] ||
+            [ ! -f "$PACKAGE_DIR/package.json" ]; then
+            echo "::error::package-dir «${PACKAGE_DIR}» is no folder of the repo with a package.json"
+            exit 1
+          fi
+          name=$(jq -r .name "$PACKAGE_DIR/package.json")
+          version=$(jq -r .version "$PACKAGE_DIR/package.json")
           if ! [[ "$name" =~ ^(@[a-z0-9~-][a-z0-9._~-]*/)?[a-z0-9~-][a-z0-9._~-]*$ ]]; then
             echo "::error::package.json names the package «${name}», not an npm package name"
             exit 1
@@ -51,14 +65,24 @@ jobs:
             echo "::error::package.json gives the version «${version}», not X.Y.Z"
             exit 1
           fi
-          echo "name=$name" >>"$GITHUB_OUTPUT"
-          echo "version=$version" >>"$GITHUB_OUTPUT"
+          # A package in a folder takes its name without the scope as the tag's prefix, so the packages of one repo and
+          # its other releases keep tags apart.
+          if [ "$PACKAGE_DIR" = . ]; then
+            tag="v$version"
+          else
+            tag="${name##*/}-v$version"
+          fi
+          {
+            echo "name=$name"
+            echo "version=$version"
+            echo "tag=$tag"
+          } >>"$GITHUB_OUTPUT"
           # A tag never moves. A merge that keeps the version releases nothing and stays green.
-          if tagged=$(git rev-parse -q --verify "refs/tags/v$version^{commit}"); then
+          if tagged=$(git rev-parse -q --verify "refs/tags/$tag^{commit}"); then
             if [ "$tagged" = "$GITHUB_SHA" ]; then
-              echo "v$version is already released from this commit"
+              echo "$tag is already released from this commit"
             else
-              echo "::warning::v$version is already released from ${tagged:0:7}, so this commit releases nothing. Raise the version in package.json."
+              echo "::warning::$tag is already released from ${tagged:0:7}, so this commit releases nothing. Raise the version in $PACKAGE_DIR/package.json."
             fi
             echo "release=false" >>"$GITHUB_OUTPUT"
             exit 0
@@ -81,7 +105,10 @@ jobs:
         with:
           cache: false
       - run: mise run setup
+      # mise takes a task from the nearest mise.toml that defines it, so a package in a folder may define its own
+      # check and pack there. Each task runs in the folder of the mise.toml that defines it.
       - run: mise run check
+        working-directory: ${{ inputs.package-dir }}
 
   # The checks run the code of every devDependency, so the tarball comes from a job of its own. The caller's `pack`
   # task installs the dependencies without their scripts.
@@ -98,10 +125,11 @@ jobs:
         with:
           cache: false
       - run: mise run pack
+        working-directory: ${{ inputs.package-dir }}
       - uses: actions/upload-artifact@v7
         with:
           name: package
-          path: "*.tgz"
+          path: ${{ inputs.package-dir }}/*.tgz
           if-no-files-found: error
 
   publish:
@@ -129,7 +157,7 @@ jobs:
           shopt -s nullglob
           tarballs=(./package/*.tgz)
           if [ "${#tarballs[@]}" -ne 1 ]; then
-            echo "::error::mise run pack left ${#tarballs[@]} tarballs, not one"
+            echo "::error::mise run pack left ${#tarballs[@]} tarballs in the package's folder, not one"
             exit 1
           fi
           packed=$(tar -xOzf "${tarballs[0]}" package/package.json | jq -r '"\(.name) \(.version)"')
@@ -160,7 +188,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           NAME: ${{ needs.version.outputs.name }}
+          TAG: ${{ needs.version.outputs.tag }}
           VERSION: ${{ needs.version.outputs.version }}
         run: |
-          gh release create "v$VERSION" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "v$VERSION" \
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "$TAG" \
             --notes "https://www.npmjs.com/package/$NAME/v/$VERSION"
