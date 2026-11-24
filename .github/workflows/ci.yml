@@ -17,7 +17,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, ready_for_review]
 
 env:
   # Unless minimum_release_age is set, mise hides a version released lately, so a pin floating on its major, such as
@@ -26,6 +26,9 @@ env:
 
 jobs:
   ci:
+    # The runners are few, so a draft PR waits for CI until it is ready for review. Its `ci / ci` shows as skipped,
+    # and the caller's `ready_for_review` runs it.
+    if: ${{ !github.event.pull_request.draft }}
     # A public repo, or a PR whose head is outside the repo, never runs on the kk-forge runner: it would run someone
     # else's code on the kk-forge server. Such a run goes to a hosted runner.
     runs-on: >-
