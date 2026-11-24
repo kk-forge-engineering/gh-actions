@@ -65,24 +65,19 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: test -n "$SONAR_TOKEN"
 
-      # Node 26's binary links libatomic, which GitHub's actions-runner image lacks, so mise fails to install it.
-      - name: Install libatomic1
+      # The apt packages a Linux job puts in before mise: libatomic1, which Node 26's binary links, dirmngr, which the
+      # SonarQube scan checks the scanner's signature with, and the caller's packages for tools mise builds from source.
+      # Names are checked strictly: apt reads some forms as actions or regexes, so only a name apt knows exactly gets
+      # through. The cache key changes each week, so a package is at most a week old.
+      - name: List the apt packages
+        id: apt
         if: runner.os == 'Linux'
-        run: ldconfig -p | grep -q libatomic.so.1 || { sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends libatomic1; }
-
-      # Packages for tools mise builds from source, so they go in before mise. Names are checked strictly: apt reads
-      # some forms as actions or regexes, so only a name apt knows exactly gets through.
-      - name: Install the apt packages the caller names
-        if: ${{ runner.os == 'Linux' && inputs.apt-packages != '' }}
         env:
-          APT_PACKAGES: ${{ inputs.apt-packages }}
-          DEBIAN_FRONTEND: noninteractive
+          APT_PACKAGES: libatomic1 dirmngr ${{ inputs.apt-packages }}
         run: |
           set -euo pipefail
           # -d "" reads every line of the list; read returns 1 at its end.
           read -r -d "" -a packages <<<"$APT_PACKAGES" || true
-          # Leave before any loop: macOS's bash 3.2, which runs the tests, fails set -u on a loop over no items.
-          if [[ ${#packages[@]} -eq 0 ]]; then exit 0; fi
           name='^[a-z0-9][a-z0-9.+-]*[a-z0-9.+]$'
           for package in "${packages[@]}"; do
             if [[ ! $package =~ $name ]]; then
@@ -90,22 +85,56 @@ jobs:
               exit 1
             fi
           done
-          # The kk-forge runner's image already holds the packages its repos name, so the job skips apt and its slow
-          # update. dpkg-query fails on a name it knows no package by, and prints a state other than installed for one
-          # removed.
-          if states=$(dpkg-query -W -f='${db:Status-Status}\n' -- "${packages[@]}" 2>/dev/null) && ! grep -qvx installed <<<"$states"; then
-            echo "The runner already has every package."
-            exit 0
-          fi
-          sudo apt-get update -qq
-          known=$(apt-cache --all-names pkgnames)
+          # The key names the Ubuntu release, the machine and the list. A clash would only cost a download.
+          system=$({ cat /etc/os-release 2>/dev/null || true; uname -m; printf '%s\n' "${packages[@]}" | sort -u; } | cksum)
+          echo "key=apt-${system%% *}-week$(($(date +%s) / 604800))" >>"$GITHUB_OUTPUT"
+
+      # apt keeps its indexes and downloads in this folder, which actions/cache saves without apt's root-only locks.
+      - name: Restore the apt packages
+        id: apt-cache
+        if: runner.os == 'Linux'
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ${{ runner.temp }}/apt
+            !${{ runner.temp }}/apt/*/lock
+          key: ${{ steps.apt.outputs.key }}
+
+      - name: Install the apt packages
+        if: runner.os == 'Linux'
+        env:
+          APT_PACKAGES: libatomic1 dirmngr ${{ inputs.apt-packages }}
+          APT_DIR: ${{ runner.temp }}/apt
+          CACHE_HIT: ${{ steps.apt-cache.outputs.cache-hit }}
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          set -euo pipefail
+          read -r -d "" -a packages <<<"$APT_PACKAGES" || true
+          # Ubuntu's images delete each download after the install, and apt's sandbox user cannot write to the runner's
+          # folder, hence the last two options.
+          apt=(-o "Dir::State::Lists=$APT_DIR/lists" -o "Dir::Cache::Archives=$APT_DIR/archives"
+            -o APT::Keep-Downloaded-Packages=true -o APT::Sandbox::User=root)
+          mkdir -p "$APT_DIR/lists/partial" "$APT_DIR/archives/partial"
+          # A restored folder holds this week's indexes and every package, so the job reaches no mirror.
+          if [[ $CACHE_HIT != true ]]; then sudo apt-get "${apt[@]}" update -qq; fi
+          known=$(apt-cache "${apt[@]}" --all-names pkgnames)
           for package in "${packages[@]}"; do
             if ! grep -Fxq -- "$package" <<<"$known"; then
               echo "::error title=apt-packages::apt knows no package named exactly '$package'."
               exit 1
             fi
           done
-          sudo --preserve-env=DEBIAN_FRONTEND apt-get install -y -qq --no-install-recommends -- "${packages[@]}"
+          sudo --preserve-env=DEBIAN_FRONTEND apt-get "${apt[@]}" install -y -qq --no-install-recommends -- "${packages[@]}"
+
+      # Only the default branch saves it, as with the Go caches.
+      - name: Save the apt packages
+        if: ${{ runner.os == 'Linux' && steps.apt-cache.outputs.cache-hit != 'true' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ${{ runner.temp }}/apt
+            !${{ runner.temp }}/apt/*/lock
+          key: ${{ steps.apt.outputs.key }}
 
       # The pins float on their major, and a cache older than a day would hold back a patch release, security fixes
       # included.

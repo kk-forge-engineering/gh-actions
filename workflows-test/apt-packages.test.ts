@@ -1,7 +1,7 @@
-// Runs the apt-packages step of ci.yml as written, with a fake sudo that records its calls. Run: `mise run test`.
+// Runs the apt steps of ci.yml as written, with a fake sudo that records its calls. Run: `mise run test`.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, test } from 'node:test';
@@ -10,106 +10,107 @@ import { stepScript } from './step.ts';
 
 const dir = mkdtempSync(path.join(tmpdir(), 'apt-packages-'));
 after(() => rmSync(dir, { recursive: true, force: true }));
-const script = path.join(dir, 'step.sh');
-writeFileSync(script, stepScript('ci.yml', 'Install the apt packages the caller names'));
+const listScript = path.join(dir, 'list.sh');
+writeFileSync(listScript, stepScript('ci.yml', 'List the apt packages'));
+const installScript = path.join(dir, 'install.sh');
+writeFileSync(installScript, stepScript('ci.yml', 'Install the apt packages'));
 const calls = path.join(dir, 'sudo-calls');
+const output = path.join(dir, 'github-output');
+const aptDir = path.join(dir, 'apt');
 // The fake sudo writes each call on its own line, its arguments separated by spaces.
 writeFileSync(path.join(dir, 'sudo'), `#!/bin/sh\necho "$*" >> "${calls}"\n`);
 chmodSync(path.join(dir, 'sudo'), 0o755);
 // Like apt-cache, the fake lists a virtual name such as libz-dev only under --all-names.
-const KNOWN = ['libwebkit2gtk-4.1-dev', 'libxcb1-dev', 'libwayland-dev', 'libyaml-dev', 'g++', 'libstdc++6', 'lib.x', '0ad'];
+const KNOWN = ['libatomic1', 'dirmngr', 'libwebkit2gtk-4.1-dev', 'libxcb1-dev', 'libwayland-dev', 'g++', 'libstdc++6', 'lib.x', '0ad'];
 const PROVIDED = ['libz-dev'];
 writeFileSync(
   path.join(dir, 'apt-cache'),
-  `#!/bin/sh\nprintf '%s\\n' ${KNOWN.join(' ')}\n[ "$1" = --all-names ] && printf '%s\\n' ${PROVIDED.join(' ')}\nexit 0\n`,
+  `#!/bin/sh\nprintf '%s\\n' ${KNOWN.join(' ')}\ncase " $* " in *" --all-names "*) printf '%s\\n' ${PROVIDED.join(' ')} ;; esac\nexit 0\n`,
 );
 chmodSync(path.join(dir, 'apt-cache'), 0o755);
-// Like dpkg-query -W, the fake prints the state of each name it knows and fails on a name it does not know.
-writeFileSync(
-  path.join(dir, 'dpkg-query'),
-  `#!/bin/bash\nshift 3\nstatus=0\nfor name; do\n  case $name in\n    libxcb1-dev|libwayland-dev) echo installed ;;\n    libyaml-dev) echo config-files ;;\n    *) status=1 ;;\n  esac\ndone\nexit $status\n`,
-);
-chmodSync(path.join(dir, 'dpkg-query'), 0o755);
 
-/** Runs the step as GitHub runs a bash `run:`, and returns its exit status, output and sudo calls. */
-const runStep = (packages: string) => {
+/** Runs a step as GitHub runs a bash `run:`, and returns its exit status, output, sudo calls and GITHUB_OUTPUT. */
+const runStep = (script: string, env: Record<string, string>) => {
   rmSync(calls, { force: true });
+  rmSync(output, { force: true });
   const result = spawnSync('bash', ['--noprofile', '--norc', '-eo', 'pipefail', script], {
-    env: { ...process.env, PATH: `${dir}${path.delimiter}${process.env.PATH}`, APT_PACKAGES: packages },
+    env: { ...process.env, PATH: `${dir}${path.delimiter}${process.env.PATH}`, GITHUB_OUTPUT: output, ...env },
     encoding: 'utf8',
   });
-  let sudo: string[] = [];
-  try {
-    sudo = readFileSync(calls, 'utf8').trimEnd().split('\n');
-  } catch {
-    // No file: sudo never ran.
-  }
-  return { status: result.status, stdout: result.stdout, sudo };
+  const read = (file: string): string => (existsSync(file) ? readFileSync(file, 'utf8') : '');
+  const sudo = read(calls).trimEnd();
+  return { status: result.status, stdout: result.stdout, sudo: sudo === '' ? [] : sudo.split('\n'), output: read(output) };
 };
 
-const INSTALL = 'apt-get install -y -qq --no-install-recommends --';
+// The workflow puts the packages every Linux job needs ahead of the caller's list.
+const listStep = (callerPackages: string) => runStep(listScript, { APT_PACKAGES: `libatomic1 dirmngr ${callerPackages}` });
+const installStep = (callerPackages: string, cacheHit = '') =>
+  runStep(installScript, { APT_PACKAGES: `libatomic1 dirmngr ${callerPackages}`, APT_DIR: aptDir, CACHE_HIT: cacheHit });
 
-test('installs every package of a list on one line', () => {
-  const { status, sudo } = runStep('libwebkit2gtk-4.1-dev libxcb1-dev');
+const key = (callerPackages: string): string => {
+  const { status, output } = listStep(callerPackages);
   assert.equal(status, 0);
-  assert.deepEqual(sudo, [
-    'apt-get update -qq',
-    `--preserve-env=DEBIAN_FRONTEND ${INSTALL} libwebkit2gtk-4.1-dev libxcb1-dev`,
-  ]);
+  const found = /^key=(apt-\d+-week\d+)$/m.exec(output);
+  assert.ok(found, `no cache key in ${JSON.stringify(output)}`);
+  return found[1];
+};
+
+const APT = `-o Dir::State::Lists=${aptDir}/lists -o Dir::Cache::Archives=${aptDir}/archives -o APT::Keep-Downloaded-Packages=true -o APT::Sandbox::User=root`;
+const UPDATE = `apt-get ${APT} update -qq`;
+const INSTALL = `--preserve-env=DEBIAN_FRONTEND apt-get ${APT} install -y -qq --no-install-recommends -- libatomic1 dirmngr`;
+
+test('keys the cache on the set of packages, whatever their order and spacing', () => {
+  assert.equal(key('libxcb1-dev libwayland-dev'), key('libwayland-dev\n  libxcb1-dev\n'));
+  assert.notEqual(key('libxcb1-dev libwayland-dev'), key('libxcb1-dev'));
 });
 
-test('installs every package of a list over several lines', () => {
-  const { status, sudo } = runStep('libwebkit2gtk-4.1-dev libxcb1-dev\nlibwayland-dev\n');
+test('updates and installs every package on a cache miss', () => {
+  const { status, sudo } = installStep('libwebkit2gtk-4.1-dev libxcb1-dev\nlibwayland-dev\n');
   assert.equal(status, 0);
-  assert.equal(sudo.at(-1), `--preserve-env=DEBIAN_FRONTEND ${INSTALL} libwebkit2gtk-4.1-dev libxcb1-dev libwayland-dev`);
+  assert.deepEqual(sudo, [UPDATE, `${INSTALL} libwebkit2gtk-4.1-dev libxcb1-dev libwayland-dev`]);
+  assert.ok(existsSync(path.join(aptDir, 'lists', 'partial')) && existsSync(path.join(aptDir, 'archives', 'partial')));
+});
+
+test('installs from the restored folder without an update on a cache hit', () => {
+  const { status, sudo } = installStep('libxcb1-dev', 'true');
+  assert.equal(status, 0);
+  assert.deepEqual(sudo, [`${INSTALL} libxcb1-dev`]);
+});
+
+test('installs only libatomic1 and dirmngr when the caller names no package', () => {
+  const { status, sudo } = installStep('');
+  assert.equal(status, 0);
+  assert.equal(sudo.at(-1), INSTALL);
 });
 
 test('accepts the characters Debian allows in a name', () => {
-  const { status, sudo } = runStep('g++ libstdc++6 lib.x 0ad');
+  assert.equal(listStep('g++ libstdc++6 lib.x 0ad').status, 0);
+  const { status, sudo } = installStep('g++ libstdc++6 lib.x 0ad');
   assert.equal(status, 0);
-  assert.equal(sudo.at(-1), `--preserve-env=DEBIAN_FRONTEND ${INSTALL} g++ libstdc++6 lib.x 0ad`);
-});
-
-test('calls no apt when every package is installed', () => {
-  const { status, stdout, sudo } = runStep('libxcb1-dev libwayland-dev');
-  assert.equal(status, 0);
-  assert.deepEqual(sudo, []);
-  assert.match(stdout, /^The runner already has every package\.$/m);
-});
-
-test('installs a package left with only its config files', () => {
-  const { status, sudo } = runStep('libxcb1-dev libyaml-dev');
-  assert.equal(status, 0);
-  assert.equal(sudo.at(-1), `--preserve-env=DEBIAN_FRONTEND ${INSTALL} libxcb1-dev libyaml-dev`);
-});
-
-test('calls no apt for a list of only spaces', () => {
-  const { status, sudo } = runStep('  \n ');
-  assert.equal(status, 0);
-  assert.deepEqual(sudo, []);
+  assert.equal(sudo.at(-1), `${INSTALL} g++ libstdc++6 lib.x 0ad`);
 });
 
 test('installs a name a package provides', () => {
-  const { status, sudo } = runStep('libz-dev');
+  const { status, sudo } = installStep('libz-dev');
   assert.equal(status, 0);
-  assert.equal(sudo.at(-1), `--preserve-env=DEBIAN_FRONTEND ${INSTALL} libz-dev`);
+  assert.equal(sudo.at(-1), `${INSTALL} libz-dev`);
 });
 
 // apt-get would read the dot as a regex and install every package it matches.
 test('fails before installing a name apt knows no package by exactly', () => {
-  const { status, stdout, sudo } = runStep('libxcb1-dev libyaml.dev');
+  const { status, stdout, sudo } = installStep('libxcb1-dev libyaml.dev');
   assert.equal(status, 1);
-  assert.deepEqual(sudo, ['apt-get update -qq'], 'apt installed although a name matches no package exactly');
+  assert.deepEqual(sudo, [UPDATE], 'apt installed although a name matches no package exactly');
   assert.match(stdout, /^::error title=apt-packages::apt knows no package named exactly 'libyaml\.dev'\.$/m);
 });
 
 // apt reads the first six as a removal, a version, an architecture, a release, a local file and an option;
 // Debian names have no capitals and at least two characters.
 for (const bad of ['pkg-', 'pkg=1.0', 'pkg:amd64', 'pkg/noble', './x.deb', '-o', 'Libfoo', 'x']) {
-  test(`fails before apt on '${bad}'`, () => {
-    const { status, stdout, sudo } = runStep(`libxcb1-dev ${bad} libwayland-dev`);
+  test(`fails before a cache key on '${bad}'`, () => {
+    const { status, stdout, output } = listStep(`libxcb1-dev ${bad} libwayland-dev`);
     assert.equal(status, 1);
-    assert.deepEqual(sudo, [], 'apt ran although a name is invalid');
+    assert.equal(output, '', 'the step gave a cache key although a name is invalid');
     assert.match(stdout, new RegExp(`^::error title=apt-packages::'${bad.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}' is not a Debian package name`, 'm'));
   });
 }
