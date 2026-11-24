@@ -121,9 +121,12 @@ jobs:
             echo "lint=${GOLANGCI_LINT_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/golangci-lint}"
           } >>"$GITHUB_OUTPUT"
 
-      - name: Cache the Go modules and builds
+      # Only main saves it, after check:ci below. A PR's own copy, up to 750 MB, served no other PR and pushed main's
+      # out of the repo's 10 GB of caches.
+      - id: go-cache
+        name: Restore the Go modules and builds
         if: ${{ steps.go-paths.outputs.mod != '' }}
-        uses: actions/cache@v6
+        uses: actions/cache/restore@v6
         with:
           path: |
             ${{ steps.go-paths.outputs.mod }}
@@ -153,6 +156,16 @@ jobs:
         # test, as on an empty runner.
         env:
           GOFLAGS: -count=1
+
+      - name: Save the Go modules and builds
+        if: ${{ steps.go-paths.outputs.mod != '' && steps.go-cache.outputs.cache-hit != 'true' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ${{ steps.go-paths.outputs.mod }}
+            ${{ steps.go-paths.outputs.build }}
+            ${{ steps.go-paths.outputs.lint }}
+          key: ${{ steps.go-cache.outputs.cache-primary-key }}
 
       # The scan runs after a red check:ci too, so SonarQube's quality gate on new code still judges a pull request in a
       # repo below the coverage floor. A failed setup skips check:ci, and so the scan. A red gate fails `ci / sonar`,
