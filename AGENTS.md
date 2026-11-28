@@ -2,7 +2,7 @@
 
 For AI agents working in this repository. What the workflows and actions do and how a repo calls them: [README.md](README.md).
 
-- Everything runs through `mise`, which installs the tools `mise.toml` pins. `mise run check` must be green before a commit ([README.md → Checks](README.md#checks)).
+- Run every command through `mise`. Before a commit, pass the [local check](README.md#checks).
 - Callers pin the major tag, such as `@v4`, so a change merged to `main` reaches no caller until the tag moves. Tags move only when the owner asks. A change that breaks a caller ships under the next major tag, and the earlier major tag stays where it is.
 - A workflow here runs in every repo that calls it, on the kk-forge runner for a private repo unless it needs a hosted one, as Release npm does. It follows `docs/standards.md` of project-orchestration: each caller passes its own repo's secrets, as the CI caller does with `SONAR_TOKEN`.
 - Pick the runner by the repo's visibility, as `release-image.yml` does. `ci.yml` also sends a PR whose head is outside the repo to a hosted runner. A public repo or such a PR never runs on the self-hosted runners, because it would run someone else's code on the kk-forge server. A job with no checkout and no tools, which only reads another job's results, may run on a hosted runner, as CI's `sonar` job does, so it never waits for a kk-forge runner.
